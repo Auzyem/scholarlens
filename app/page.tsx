@@ -1,23 +1,16 @@
 import Link from 'next/link'
+import { Space_Grotesk, Public_Sans } from 'next/font/google'
 import {
   Upload, Compass, ShieldAlert, Library, FileSpreadsheet, TrendingUp,
   ArrowRight, Mail, Check,
 } from 'lucide-react'
-import { ScoreRadar } from '@/components/review/ScoreRadar'
 import { PricingSection } from '@/components/marketing/PricingSection'
 import { Logo } from '@/components/layout/Logo'
-import type { Score } from '@/lib/types'
 
-const DEMO_SCORES: Score[] = [
-  { id: '1', session_id: 'd', dimension: 'originality', score: 8, max_score: 10 },
-  { id: '2', session_id: 'd', dimension: 'significance', score: 7, max_score: 10 },
-  { id: '3', session_id: 'd', dimension: 'methodology', score: 6, max_score: 10 },
-  { id: '4', session_id: 'd', dimension: 'evidence_quality', score: 7, max_score: 10 },
-  { id: '5', session_id: 'd', dimension: 'literature_engagement', score: 8, max_score: 10 },
-  { id: '6', session_id: 'd', dimension: 'internal_logic', score: 6, max_score: 10 },
-  { id: '7', session_id: 'd', dimension: 'presentation_clarity', score: 9, max_score: 10 },
-  { id: '8', session_id: 'd', dimension: 'ethical_compliance', score: 8, max_score: 10 },
-]
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], weight: ['500', '600', '700'] })
+const publicSans = Public_Sans({ subsets: ['latin'], weight: ['400', '500', '600', '700'] })
+
+const HERO_PILLS = ['Comprehensive review', 'Actionable feedback', 'Submit with confidence']
 
 const STEPS = [
   { icon: Upload, title: 'Upload your manuscript', body: 'Drop in a PDF or DOCX. ScholarLens analyses your full manuscript, structure, arguments and key sections.' },
@@ -58,49 +51,85 @@ export default function Home() {
       </header>
 
       {/* Hero */}
-      <section className="relative overflow-hidden">
+      <section className={`relative overflow-hidden bg-gradient-to-br from-white via-[#F3F9FA] to-pr-teal-tint ${publicSans.className}`}>
         <div className="pointer-events-none absolute -top-24 right-0 h-96 w-96 rounded-full bg-pr-teal/20 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-24 -left-24 h-96 w-96 rounded-full bg-pr-teal-tint/40 blur-3xl" />
-        <div className="mx-auto grid max-w-6xl items-center gap-12 px-6 py-20 md:grid-cols-2">
-          <div>
-            <h1 className="text-4xl font-bold leading-tight sm:text-5xl">
-              See what you might have missed
+        <div className="pointer-events-none absolute -bottom-24 -left-24 h-96 w-96 rounded-full bg-pr-teal-tint/60 blur-3xl" />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 opacity-70"
+          style={{
+            backgroundImage:
+              'linear-gradient(rgba(7,17,47,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(7,17,47,0.035) 1px, transparent 1px)',
+            backgroundSize: '64px 64px',
+            maskImage: 'radial-gradient(ellipse 90% 70% at 55% 40%, #000, transparent)',
+            WebkitMaskImage: 'radial-gradient(ellipse 90% 70% at 55% 40%, #000, transparent)',
+          }}
+        />
+        <div className="relative mx-auto grid max-w-6xl items-center gap-16 px-6 py-16 lg:grid-cols-2 lg:py-24">
+          <div className="text-center lg:text-left">
+            <h1
+              className={`text-[44px] font-semibold leading-[1.05] tracking-tight text-pr-navy lg:text-[66px] ${spaceGrotesk.className}`}
+            >
+              See what you might have{' '}
+              <span className="relative inline-block text-pr-teal">
+                <span className="absolute inset-x-0 bottom-1.5 -z-10 h-2.5 rounded bg-pr-teal/20" />
+                missed
+              </span>
             </h1>
-            <p className="mt-4 text-lg text-pr-body">
+            <p className="mx-auto mt-6 max-w-[52ch] text-lg leading-relaxed text-pr-body lg:mx-0">
               Upload your thesis, dissertation, capstone or research paper and receive structured
               academic feedback to help strengthen your work before submission.
-              <br />
-              Comprehensive Review • Actionable Feedback • Submit with Confidence
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="mt-6 flex flex-wrap justify-center gap-2.5 lg:justify-start">
+              {HERO_PILLS.map(pill => (
+                <span
+                  key={pill}
+                  className="inline-flex items-center gap-2 rounded-full border bg-white px-4 py-2 text-sm font-medium text-pr-navy shadow-sm"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-pr-teal" /> {pill}
+                </span>
+              ))}
+            </div>
+            <div className="mt-9 flex flex-wrap justify-center gap-3.5 lg:justify-start">
               <Link
                 href="/login"
-                className="inline-flex items-center gap-2 rounded-md bg-pr-teal px-5 py-3 font-medium text-white shadow hover:bg-pr-teal-600"
+                className="inline-flex items-center gap-2 rounded-xl bg-pr-teal px-8 py-4 font-semibold text-white shadow-[0_10px_30px_rgba(23,162,184,0.32)] hover:bg-pr-teal-600"
               >
                 Get started <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
                 href="/signup"
-                className="inline-flex items-center gap-2 rounded-md border px-5 py-3 font-medium text-pr-body hover:bg-pr-surface-alt"
+                className="inline-flex items-center gap-2 rounded-xl border px-8 py-4 font-semibold text-pr-navy hover:bg-pr-surface-alt"
               >
                 Create an account
               </Link>
             </div>
-            <p className="mt-4 text-sm text-pr-muted">No credit card required · PDF &amp; DOCX supported</p>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-4 text-sm text-pr-muted lg:justify-start">
+              <span className="inline-flex items-center gap-1.5">
+                <Check className="h-3.5 w-3.5 text-pr-teal" /> No credit card required
+              </span>
+              <span className="h-1 w-1 rounded-full bg-pr-line" />
+              <span className="inline-flex items-center gap-1.5">
+                <Check className="h-3.5 w-3.5 text-pr-teal" /> PDF &amp; DOCX supported
+              </span>
+            </div>
           </div>
 
-          {/* Hero visual: a product-style card using the real radar chart */}
-          <div className="rounded-2xl border bg-white p-6 shadow-xl">
-            <div className="mb-3 flex items-center justify-between">
-              <span className="rounded-full bg-pr-gold-light px-3 py-1 text-xs font-semibold text-pr-gold">
-                Minor revision
-              </span>
-              <span className="text-lg font-semibold text-pr-navy">59 / 80</span>
+          {/* Brand mark panel */}
+          <div className="relative flex flex-col items-center justify-center gap-8 text-center">
+            <div className="pointer-events-none absolute h-[380px] w-[380px] rounded-full bg-pr-teal/20 blur-3xl" />
+            <div className="relative flex h-[260px] w-[260px] items-center justify-center rounded-full border border-pr-teal/25 sm:h-[340px] sm:w-[340px]">
+              <div className="absolute inset-9 rounded-full border border-pr-teal/20 sm:inset-11" />
+              <div className="absolute inset-[68px] rounded-full bg-white shadow-[0_24px_60px_rgba(7,17,47,0.10)] sm:inset-[88px]" />
+              <Logo size={72} className="relative" />
             </div>
-            <ScoreRadar scores={DEMO_SCORES} />
-            <p className="mt-2 text-center text-xs text-pr-muted">
-              Eight quality dimensions, scored 1–10
-            </p>
+            <div className="flex items-center justify-center gap-3 text-[11px] font-semibold uppercase tracking-[0.24em] text-pr-muted">
+              <span>Clarity</span>
+              <span className="h-1 w-1 rounded-full bg-pr-teal" />
+              <span>Insight</span>
+              <span className="h-1 w-1 rounded-full bg-pr-teal" />
+              <span>Confidence</span>
+            </div>
           </div>
         </div>
       </section>
