@@ -17,7 +17,13 @@ const FEATURES: Record<string, string[]> = {
   free: ['3 manuscripts', '2 reviews / month', 'Score breakdown', 'Inline annotations'],
   starter: ['20 manuscripts', '10 reviews / month', 'Journal matching', 'PDF reports'],
   pro: ['100 manuscripts', '30 reviews / month', 'Adversarial review', '7-day free trial'],
-  team: ['Unlimited manuscripts', 'Unlimited reviews', 'Team members', 'API access'],
+  team: [
+    'Bulk purchasing discounts',
+    'Department or campus-wide licences',
+    'Single invoice',
+    'Dedicated account management',
+    'Custom onboarding for your users',
+  ],
 }
 const HIGHLIGHT = 'pro'
 
@@ -60,6 +66,31 @@ export function PricingSection() {
 
         <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {plans.map(plan => {
+            if (plan.id === 'team') {
+              return (
+                <div key={plan.id} className="relative flex flex-col rounded-xl border bg-white p-6">
+                  <div className="text-base font-semibold text-pr-navy">Academic &amp; Enterprise Licence</div>
+                  <p className="mt-3 text-sm text-pr-body">
+                    Designed for universities, colleges, training providers and organisations
+                    looking to provide access for multiple users.
+                  </p>
+                  <ul className="mt-4 mb-6 flex-1 space-y-2">
+                    {FEATURES.team.map(f => (
+                      <li key={f} className="flex items-start gap-2 text-sm text-pr-body">
+                        <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pr-teal" /> {f}
+                      </li>
+                    ))}
+                  </ul>
+                  <a
+                    href="#contact"
+                    className="w-full rounded-md border px-4 py-2 text-center text-sm font-medium text-pr-body hover:bg-pr-surface-alt"
+                  >
+                    Contact us
+                  </a>
+                </div>
+              )
+            }
+
             const monthly = plan.price_monthly_usd ?? 0
             const annualMonthly = plan.price_annual_monthly_usd ?? 0
             const annualTotal = annualMonthly * 12

@@ -20,19 +20,19 @@ const DEMO_SCORES: Score[] = [
 ]
 
 const STEPS = [
-  { icon: Upload, title: 'Upload your manuscript', body: 'Drop in a PDF or DOCX. We parse the full text and extract sections automatically.' },
-  { icon: Compass, title: 'Discipline routing', body: 'Claude identifies the field, sub-field, and the most appropriate reviewer persona for your paper.' },
-  { icon: ShieldAlert, title: 'Deep + adversarial review', body: 'A rigorous senior-reviewer pass scores eight dimensions; an optional "Reviewer 2" escalates the weaknesses.' },
-  { icon: Library, title: 'Target the right journal', body: 'Get ranked journal recommendations with acceptance odds, timelines, and the key change each one needs.' },
+  { icon: Upload, title: 'Upload your manuscript', body: 'Drop in a PDF or DOCX. ScholarLens analyses your full manuscript, structure, arguments and key sections.' },
+  { icon: Compass, title: 'Match your research context', body: 'Your manuscript is assessed against your discipline, research area and the expectations of relevant reviewers.' },
+  { icon: ShieldAlert, title: 'Stress-test your paper', body: 'Receive a rigorous reviewer-style assessment across eight dimensions, including an optional "Reviewer 2" challenge to uncover weaknesses before submission.' },
+  { icon: Library, title: 'Find the right journal fit', body: 'Explore ranked journal recommendations with scope alignment and publication insights. Understand what changes could improve alignment before submission.' },
 ]
 
 const FEATURES = [
-  { icon: Check, title: 'Eight scored dimensions', body: 'Originality, significance, methodology, evidence, literature, logic, clarity, and ethics — each with rationale and fixes.' },
-  { icon: ShieldAlert, title: 'Adversarial critique', body: 'The harsh-but-fair objections a reviewer could make, each with a quoted passage and a concrete required fix.' },
+  { icon: Check, title: 'Eight dimensions of research quality', body: 'Originality, significance, methodology, evidence, literature, logic, clarity and ethics - each scored with reviewer rationale and actionable improvements.' },
+  { icon: ShieldAlert, title: 'Reviewer 2 stress test', body: 'Simulate the toughest reviewer objections, with quoted passages, explanations and clear actions to strengthen your manuscript.' },
   { icon: Library, title: 'Journal matching', body: 'Five to eight venues ranked by fit, with impact factor, decision time, open-access options, and APC.' },
-  { icon: TrendingUp, title: 'Revision tracking', body: 'Re-upload a revised draft and see exactly which scores improved and which reviewer comments you addressed.' },
-  { icon: FileSpreadsheet, title: 'Export to Excel', body: 'A reviewer-response matrix you can fill in: scores, annotations, critiques, and journal targets across four sheets.' },
-  { icon: Compass, title: 'Built for first submissions', body: 'Designed for PhD candidates and early-career researchers submitting to academic journals.' },
+  { icon: TrendingUp, title: 'Track your revisions', body: 'Upload revised drafts and see which scores improved, which reviewer concerns were resolved and where further work is needed.' },
+  { icon: FileSpreadsheet, title: 'Export your review plan', body: 'Export a structured reviewer-response matrix containing scores, annotations, critiques and journal targets across four organised sheets.' },
+  { icon: Compass, title: 'Designed for researchers at every stage', body: 'Designed for PhD candidates and early-career researchers preparing manuscripts for academic journal submission.' },
 ]
 
 export default function Home() {
@@ -63,16 +63,14 @@ export default function Home() {
         <div className="pointer-events-none absolute -bottom-24 -left-24 h-96 w-96 rounded-full bg-pr-teal-tint/40 blur-3xl" />
         <div className="mx-auto grid max-w-6xl items-center gap-12 px-6 py-20 md:grid-cols-2">
           <div>
-            <span className="inline-block rounded-full bg-pr-teal-tint px-3 py-1 text-xs font-medium text-pr-teal-700">
-              AI peer review for academic manuscripts
-            </span>
-            <h1 className="mt-4 text-4xl font-bold leading-tight sm:text-5xl">
-              Know what reviewers will say — before you submit.
+            <h1 className="text-4xl font-bold leading-tight sm:text-5xl">
+              See what you might have missed
             </h1>
             <p className="mt-4 text-lg text-pr-body">
-              Upload your paper and ScholarLens runs a rigorous, discipline-aware review: eight scored
-              dimensions, inline annotations, an adversarial &ldquo;Reviewer 2&rdquo; pass, and a
-              ranked shortlist of journals to target.
+              Upload your thesis, dissertation, capstone or research paper and receive structured
+              academic feedback to help strengthen your work before submission.
+              <br />
+              Comprehensive Review • Actionable Feedback • Submit with Confidence
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
@@ -112,7 +110,8 @@ export default function Home() {
         <div className="mx-auto max-w-6xl px-6 py-20">
           <h2 className="text-center text-3xl font-bold text-pr-navy">How it works</h2>
           <p className="mx-auto mt-2 max-w-2xl text-center text-pr-body">
-            From upload to submission-ready in minutes — four automated stages.
+            ScholarLens analyses your manuscript across multiple review dimensions, highlights
+            weaknesses and helps you identify the right journals to target.
           </p>
           <ol className="mt-12 grid gap-6 md:grid-cols-2 lg:grid-cols-4">
             {STEPS.map((s, i) => (
@@ -134,9 +133,9 @@ export default function Home() {
 
       {/* Features */}
       <section id="features" className="mx-auto max-w-6xl px-6 py-20">
-        <h2 className="text-center text-3xl font-bold text-pr-navy">Everything in one review</h2>
+        <h2 className="text-center text-3xl font-bold text-pr-navy">Your complete pre-submission review</h2>
         <p className="mx-auto mt-2 max-w-2xl text-center text-pr-body">
-          A complete reviewer&rsquo;s-eye view of your manuscript.
+          Understand how reviewers may judge your manuscript before it reaches a journal.
         </p>
         <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map(f => (
@@ -165,7 +164,7 @@ export default function Home() {
               Get started free <ArrowRight className="h-4 w-4" />
             </Link>
             <a
-              href="mailto:hello@scholarlens.ac"
+              href="mailto:contact@scholarlens.ac"
               className="inline-flex items-center gap-2 rounded-md border border-white/30 px-5 py-3 font-medium text-white hover:bg-white/10"
             >
               <Mail className="h-4 w-4" /> Contact us
@@ -180,7 +179,7 @@ export default function Home() {
           <div className="flex gap-4">
             <Link href="/login" className="hover:text-pr-navy">Log in</Link>
             <Link href="/signup" className="hover:text-pr-navy">Sign up</Link>
-            <a href="mailto:hello@scholarlens.ac" className="hover:text-pr-navy">Contact</a>
+            <a href="mailto:contact@scholarlens.ac" className="hover:text-pr-navy">Contact</a>
           </div>
         </div>
       </footer>
