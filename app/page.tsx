@@ -6,6 +6,8 @@ import {
 } from 'lucide-react'
 import { PricingSection } from '@/components/marketing/PricingSection'
 import { Logo } from '@/components/layout/Logo'
+import { MarketingHeader } from '@/components/layout/MarketingHeader'
+import { MarketingFooter } from '@/components/layout/MarketingFooter'
 
 const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], weight: ['500', '600', '700'] })
 const publicSans = Public_Sans({ subsets: ['latin'], weight: ['400', '500', '600', '700'] })
@@ -31,24 +33,7 @@ const FEATURES = [
 export default function Home() {
   return (
     <main className="min-h-screen bg-white text-pr-navy">
-      {/* Nav */}
-      <header className="sticky top-0 z-10 border-b bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <Logo size={26} />
-          <nav className="hidden items-center gap-6 text-sm text-pr-body sm:flex">
-            <a href="#how" className="hover:text-pr-navy">How it works</a>
-            <a href="#features" className="hover:text-pr-navy">Features</a>
-            <a href="#pricing" className="hover:text-pr-navy">Pricing</a>
-            <a href="#contact" className="hover:text-pr-navy">Contact</a>
-          </nav>
-          <div className="flex items-center gap-3 text-sm">
-            <Link href="/login" className="text-pr-body hover:text-pr-navy">Log in</Link>
-            <Link href="/signup" className="rounded-md bg-pr-teal px-3 py-1.5 font-medium text-white hover:bg-pr-teal-600">
-              Sign up
-            </Link>
-          </div>
-        </div>
-      </header>
+      <MarketingHeader />
 
       {/* Hero */}
       <section className={`relative overflow-hidden bg-gradient-to-br from-white via-[#F3F9FA] to-pr-teal-tint ${publicSans.className}`}>
@@ -202,16 +187,7 @@ export default function Home() {
         </div>
       </section>
 
-      <footer className="border-t">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-6 py-8 text-sm text-pr-muted sm:flex-row">
-          <span>© {new Date().getFullYear()} ScholarLens</span>
-          <div className="flex gap-4">
-            <Link href="/login" className="hover:text-pr-navy">Log in</Link>
-            <Link href="/signup" className="hover:text-pr-navy">Sign up</Link>
-            <a href="mailto:contact@scholarlens.ac" className="hover:text-pr-navy">Contact</a>
-          </div>
-        </div>
-      </footer>
+      <MarketingFooter />
     </main>
   )
 }
