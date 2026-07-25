@@ -13,19 +13,22 @@ interface DbPlan {
   price_monthly_usd: number | null
   price_annual_monthly_usd: number | null
   annual_discount_pct: number | null
+  max_manuscripts: number | null
+  max_reviews_per_month: number | null
 }
 
-// Presentation-only metadata (copy + feature lists). Prices and discounts come
-// from the database so admins can edit them; this just describes each plan.
-const PLAN_META: Record<string, { description: string; features: string[]; cta: string; highlight: boolean }> = {
+// Presentation-only metadata (copy + extra feature bullets). Prices, discounts,
+// and manuscript/review limits come from the database so admins can edit them;
+// this just describes each plan and lists bullets beyond those DB-driven counts.
+const PLAN_META: Record<string, { description: string; extraFeatures: string[]; cta: string; highlight: boolean }> = {
   free: { description: 'Try the core review engine', highlight: false, cta: 'Current plan',
-    features: ['3 manuscripts', '2 reviews per month', 'Score breakdown', 'Inline annotations'] },
+    extraFeatures: ['Score breakdown', 'Inline annotations'] },
   starter: { description: 'For active PhD students', highlight: false, cta: 'Upgrade to Starter',
-    features: ['20 manuscripts', '10 reviews per month', 'Journal matching', 'PDF reports', 'Send to author'] },
-  pro: { description: 'For serious researchers', highlight: true, cta: 'Start Pro trial',
-    features: ['100 manuscripts', '30 reviews per month', 'Adversarial review', 'Journal matching', 'PDF reports', '7-day free trial'] },
+    extraFeatures: ['Journal matching', 'PDF reports', 'Send to author'] },
+  pro: { description: 'For serious researchers', highlight: true, cta: 'Upgrade to Pro',
+    extraFeatures: ['Adversarial review', 'Journal matching', 'PDF reports'] },
   team: { description: 'For labs and departments', highlight: false, cta: 'Upgrade to Team',
-    features: ['Unlimited manuscripts', 'Unlimited reviews', 'All Pro features', 'Team members', 'Admin dashboard', 'API access'] },
+    extraFeatures: ['All Pro features', 'Team members', 'Admin dashboard', 'API access'] },
 }
 
 export default function BillingPage() {
@@ -158,12 +161,19 @@ export default function BillingPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {plans.map((plan) => {
-          const meta = PLAN_META[plan.id] ?? { description: '', features: [], cta: 'Upgrade', highlight: false }
+          const meta = PLAN_META[plan.id] ?? { description: '', extraFeatures: [], cta: 'Upgrade', highlight: false }
           const isCurrent = plan.id === currentPlan
           const monthly = plan.price_monthly_usd ?? 0
           const annualMonthly = plan.price_annual_monthly_usd ?? 0
           const annualTotal = annualMonthly * 12
           const discount = plan.annual_discount_pct ?? 0
+          const manuscripts = plan.max_manuscripts ?? 0
+          const reviews = plan.max_reviews_per_month ?? 0
+          const features = [
+            `${manuscripts} manuscript${manuscripts === 1 ? '' : 's'}`,
+            `${reviews} review${reviews === 1 ? '' : 's'} per month`,
+            ...meta.extraFeatures,
+          ]
           return (
             <Card key={plan.id} className={`relative flex flex-col p-5 ${meta.highlight ? 'border-2 border-pr-teal' : ''}`}>
               {meta.highlight && (
@@ -202,7 +212,7 @@ export default function BillingPage() {
               </div>
 
               <ul className="mb-5 flex-1 space-y-2">
-                {meta.features.map((f) => (
+                {features.map((f) => (
                   <li key={f} className="flex items-start gap-2 text-sm">
                     <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pr-teal" /> {f}
                   </li>
