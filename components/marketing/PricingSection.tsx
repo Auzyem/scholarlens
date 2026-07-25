@@ -11,12 +11,16 @@ interface DbPlan {
   price_monthly_usd: number | null
   price_annual_monthly_usd: number | null
   annual_discount_pct: number | null
+  max_manuscripts: number | null
+  max_reviews_per_month: number | null
 }
 
-const FEATURES: Record<string, string[]> = {
-  free: ['3 manuscripts', '2 reviews / month', 'Score breakdown', 'Inline annotations'],
-  starter: ['20 manuscripts', '10 reviews / month', 'Journal matching', 'PDF reports'],
-  pro: ['100 manuscripts', '30 reviews / month', 'Adversarial review', '7-day free trial'],
+// Extra bullets beyond the manuscript/review counts, which come from the plan
+// row itself so admin edits to those limits show up here without a code change.
+const EXTRA_FEATURES: Record<string, string[]> = {
+  free: ['Score breakdown', 'Inline annotations'],
+  starter: ['Journal matching', 'PDF reports'],
+  pro: ['Adversarial review'],
   team: [
     'Bulk purchasing discounts',
     'Department or campus-wide licences',
@@ -75,7 +79,7 @@ export function PricingSection() {
                     looking to provide access for multiple users.
                   </p>
                   <ul className="mt-4 mb-6 flex-1 space-y-2">
-                    {FEATURES.team.map(f => (
+                    {EXTRA_FEATURES.team.map(f => (
                       <li key={f} className="flex items-start gap-2 text-sm text-pr-body">
                         <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pr-teal" /> {f}
                       </li>
@@ -96,6 +100,13 @@ export function PricingSection() {
             const annualTotal = annualMonthly * 12
             const discount = plan.annual_discount_pct ?? 0
             const highlight = plan.id === HIGHLIGHT
+            const manuscripts = plan.max_manuscripts ?? 0
+            const reviews = plan.max_reviews_per_month ?? 0
+            const features = [
+              `${manuscripts} manuscript${manuscripts === 1 ? '' : 's'}`,
+              `${reviews} review${reviews === 1 ? '' : 's'} / month`,
+              ...(EXTRA_FEATURES[plan.id] ?? []),
+            ]
             return (
               <div key={plan.id} className={`relative flex flex-col rounded-xl border bg-white p-6 ${highlight ? 'border-2 border-pr-teal shadow-md' : ''}`}>
                 {highlight && (
@@ -129,7 +140,7 @@ export function PricingSection() {
                   )}
                 </div>
                 <ul className="mt-4 mb-6 flex-1 space-y-2">
-                  {(FEATURES[plan.id] ?? []).map(f => (
+                  {features.map(f => (
                     <li key={f} className="flex items-start gap-2 text-sm text-pr-body">
                       <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pr-teal" /> {f}
                     </li>
