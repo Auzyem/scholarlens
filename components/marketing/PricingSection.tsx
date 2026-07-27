@@ -19,7 +19,7 @@ interface DbPlan {
 // row itself so admin edits to those limits show up here without a code change.
 const EXTRA_FEATURES: Record<string, string[]> = {
   free: ['Score breakdown', 'Inline annotations'],
-  starter: ['Journal matching', 'PDF reports'],
+  starter: ['PDF reports'],
   pro: ['Adversarial review'],
   team: [
     'Bulk purchasing discounts',

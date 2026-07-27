@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { createClient } from '@/lib/supabase/server'
 import { runAdversarialPipeline } from '@/lib/ai/adversarialPipeline'
+import { checkFeatureGate } from '@/lib/plan/gates'
 
 export const maxDuration = 300
 
@@ -9,6 +10,14 @@ export async function POST(request: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const gate = await checkFeatureGate(user.id, 'adversarial_access')
+  if (!gate.allowed) {
+    return NextResponse.json(
+      { error: 'Adversarial review requires a Pro plan or above', upgradeUrl: '/billing' },
+      { status: 403 }
+    )
+  }
 
   const { sessionId } = await request.json()
   if (!sessionId) return NextResponse.json({ error: 'sessionId required' }, { status: 400 })
