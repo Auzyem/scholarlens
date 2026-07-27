@@ -4,6 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { Check, CreditCard, ExternalLink, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { UsageCard } from '@/components/dashboard/UsageCard'
 
 type Interval = 'monthly' | 'annual'
 
@@ -24,7 +25,7 @@ const PLAN_META: Record<string, { description: string; extraFeatures: string[]; 
   free: { description: 'Try the core review engine', highlight: false, cta: 'Current plan',
     extraFeatures: ['Score breakdown', 'Inline annotations'] },
   starter: { description: 'For active PhD students', highlight: false, cta: 'Upgrade to Starter',
-    extraFeatures: ['Journal matching', 'PDF reports', 'Send to author'] },
+    extraFeatures: ['PDF reports', 'Send to author'] },
   pro: { description: 'For serious researchers', highlight: true, cta: 'Upgrade to Pro',
     extraFeatures: ['Adversarial review', 'Journal matching', 'PDF reports'] },
   team: { description: 'For labs and departments', highlight: false, cta: 'Upgrade to Team',
@@ -129,6 +130,10 @@ export default function BillingPage() {
             ? `You are on the ${currentPlan[0].toUpperCase() + currentPlan.slice(1)} plan${cancelAtEnd ? ' · Cancels at period end' : ''}${periodEnd ? ` · Renews ${new Date(periodEnd).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`
             : 'You are on the Free plan.'}
         </p>
+      </div>
+
+      <div className="mb-8 max-w-sm">
+        <UsageCard />
       </div>
 
       {currentPlan !== 'free' && (

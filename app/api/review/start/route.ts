@@ -5,6 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { resolveAuth } from '@/lib/apiKeys/middleware'
 import { runReviewPipeline } from '@/lib/ai/pipeline'
 import { RATE_LIMITS, ACTIVE_REVIEW_STATUSES, hourAgoIso } from '@/lib/rateLimit'
+import { checkReviewLimit } from '@/lib/plan/gates'
 
 export const maxDuration = 300
 
@@ -60,6 +61,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: 'Hourly review limit reached. Please try again later.' },
       { status: 429 }
+    )
+  }
+
+  // 3) the plan's monthly review cap (business limit, distinct from the hourly abuse cap above)
+  const planLimit = await checkReviewLimit(userId)
+  if (!planLimit.allowed) {
+    const planName = planLimit.plan[0].toUpperCase() + planLimit.plan.slice(1)
+    return NextResponse.json(
+      { error: `Monthly review limit reached (${planLimit.used}/${planLimit.limit} on the ${planName} plan)`, upgradeUrl: '/billing' },
+      { status: 403 }
     )
   }
 

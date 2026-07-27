@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { checkManuscriptLimit } from '@/lib/plan/gates'
 
 const SORTABLE = new Set(['updated_at', 'created_at', 'title', 'word_count'])
 
@@ -45,6 +46,15 @@ export async function POST(request: NextRequest) {
   const body = await request.json()
   const { title, submission_target } = body
   if (!title) return NextResponse.json({ error: 'Title required' }, { status: 400 })
+
+  const limit = await checkManuscriptLimit(user.id)
+  if (!limit.allowed) {
+    const planName = limit.plan[0].toUpperCase() + limit.plan.slice(1)
+    return NextResponse.json(
+      { error: `Manuscript limit reached (${limit.used}/${limit.limit} on the ${planName} plan)`, upgradeUrl: '/billing' },
+      { status: 403 }
+    )
+  }
 
   const { data, error } = await supabase
     .from('manuscripts')
