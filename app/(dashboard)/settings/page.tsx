@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
 import type { CareerStage, Profile } from '@/lib/types'
+import { UserStatsPanel } from '@/components/stats/UserStatsPanel'
 
 const CAREER_STAGES: { value: CareerStage; label: string }[] = [
   { value: 'phd_student', label: 'PhD student' },
@@ -92,6 +93,11 @@ export default async function SettingsPage() {
           Save changes
         </button>
       </form>
+
+      <div className="mt-10">
+        <h2 className="mb-4 text-lg font-semibold">Your activity</h2>
+        <UserStatsPanel />
+      </div>
     </div>
   )
 }

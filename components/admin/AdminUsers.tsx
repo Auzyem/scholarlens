@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Trash2, Loader2 } from 'lucide-react'
+import Link from 'next/link'
+import { Search, Trash2, Loader2, BarChart3 } from 'lucide-react'
 
 interface AdminUser {
   id: string
@@ -185,14 +186,23 @@ export function AdminUsers() {
                     </select>
                   </td>
                   <td className="p-3 text-right">
-                    <button
-                      onClick={() => deleteUser(u.id, u.email)}
-                      disabled={pending === u.id}
-                      className="rounded p-1.5 text-red-600 hover:bg-red-50"
-                      title="Delete user"
-                    >
-                      {pending === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                    </button>
+                    <div className="flex items-center justify-end gap-1">
+                      <Link
+                        href={`/admin/users/${u.id}`}
+                        className="rounded p-1.5 text-muted-foreground hover:bg-muted"
+                        title="View stats"
+                      >
+                        <BarChart3 className="h-4 w-4" />
+                      </Link>
+                      <button
+                        onClick={() => deleteUser(u.id, u.email)}
+                        disabled={pending === u.id}
+                        className="rounded p-1.5 text-red-600 hover:bg-red-50"
+                        title="Delete user"
+                      >
+                        {pending === u.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
