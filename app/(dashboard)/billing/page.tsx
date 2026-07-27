@@ -161,6 +161,29 @@ export default function BillingPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {plans.map((plan) => {
+          // Team is an enterprise/academic licence assigned manually by an admin
+          // after the customer contacts sales — never self-serve checkout.
+          if (plan.id === 'team') {
+            return (
+              <Card key={plan.id} className="relative flex flex-col p-5">
+                <div className="mb-3">
+                  <div className="text-base font-medium">{plan.name}</div>
+                  <div className="text-sm text-muted-foreground">For labs, departments, and institutions</div>
+                </div>
+                <ul className="mb-5 flex-1 space-y-2">
+                  {['Bulk purchasing discounts', 'Department or campus-wide licences', 'Single invoice', 'Dedicated account management'].map((f) => (
+                    <li key={f} className="flex items-start gap-2 text-sm">
+                      <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-pr-teal" /> {f}
+                    </li>
+                  ))}
+                </ul>
+                <Button asChild variant="outline" className="w-full">
+                  <a href="mailto:contact@scholarlens.ac?subject=Team%20plan%20enquiry">Contact us</a>
+                </Button>
+              </Card>
+            )
+          }
+
           const meta = PLAN_META[plan.id] ?? { description: '', extraFeatures: [], cta: 'Upgrade', highlight: false }
           const isCurrent = plan.id === currentPlan
           const monthly = plan.price_monthly_usd ?? 0

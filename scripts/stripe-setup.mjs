@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Idempotent Stripe setup for PeerReady.
+ * Idempotent Stripe setup for ScholarLens.
  *
  * Creates the Starter/Pro/Team products and their monthly + annual prices, then
  * prints the STRIPE_PRICE_* env block to paste into .env.local and Vercel.
@@ -8,9 +8,10 @@
  * Run with your TEST-mode secret key (the key never leaves your machine):
  *   STRIPE_SECRET_KEY=sk_test_... node scripts/stripe-setup.mjs
  *
- * Safe to re-run: products are matched by metadata.peerready_plan and prices by
+ * Safe to re-run: products are matched by metadata.scholarlens_plan and prices by
  * lookup_key, so nothing is duplicated. Prices are immutable in Stripe — to change
- * an amount, archive the old price in the dashboard and bump the lookup_key here.
+ * an amount, use the admin console's price sync (or archive the old price and
+ * bump the lookup_key here).
  */
 import Stripe from 'stripe'
 
@@ -27,9 +28,9 @@ const stripe = new Stripe(key)
 
 // Amounts in cents. `annual` is the total charged once per year (matches the billing page).
 const PLANS = [
-  { id: 'starter', name: 'PeerReady Starter', monthly: 1200, annual: 9600 },
-  { id: 'pro', name: 'PeerReady Pro', monthly: 2900, annual: 22800 },
-  { id: 'team', name: 'PeerReady Team', monthly: 7900, annual: 70800 },
+  { id: 'starter', name: 'ScholarLens Starter', monthly: 1200, annual: 9600 },
+  { id: 'pro', name: 'ScholarLens Pro', monthly: 2900, annual: 22800 },
+  { id: 'team', name: 'ScholarLens Team', monthly: 7900, annual: 70800 },
 ]
 
 const INTERVALS = [
@@ -49,14 +50,14 @@ const ENV_VAR = {
 async function findOrCreateProduct(plan) {
   // List + filter by metadata (avoids the Search API's indexing lag).
   for await (const product of stripe.products.list({ limit: 100 })) {
-    if (product.active && product.metadata?.peerready_plan === plan.id) {
+    if (product.active && product.metadata?.scholarlens_plan === plan.id) {
       console.log(`• product ${plan.id}: reusing ${product.id}`)
       return product
     }
   }
   const created = await stripe.products.create({
     name: plan.name,
-    metadata: { peerready_plan: plan.id },
+    metadata: { scholarlens_plan: plan.id },
   })
   console.log(`• product ${plan.id}: created ${created.id}`)
   return created
@@ -76,7 +77,7 @@ async function findOrCreatePrice(product, plan, iv) {
     unit_amount: amount,
     recurring: { interval: iv.interval },
     lookup_key: lookupKey,
-    metadata: { peerready_plan: plan.id, peerready_interval: iv.key },
+    metadata: { scholarlens_plan: plan.id, scholarlens_interval: iv.key },
   })
   console.log(`    price ${lookupKey}: created ${price.id} ($${(amount / 100).toFixed(2)}/${iv.interval})`)
   return price

@@ -1,7 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { Search, Trash2, Loader2 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 
 interface AdminUser {
   id: string
@@ -62,6 +61,27 @@ export function AdminUsers() {
       try { data = JSON.parse(text) } catch { throw new Error(`Server error (${res.status})`) }
       if (!res.ok) throw new Error(data.error ?? 'Failed to change role')
       setToast('Role updated')
+      await fetchUsers()
+    } catch (e) {
+      setToast(`Error: ${e instanceof Error ? e.message : 'Failed'}`)
+    } finally {
+      setPending(null)
+    }
+  }
+
+  const changePlan = async (userId: string, newPlan: string) => {
+    setPending(userId)
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/plan`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId: newPlan }),
+      })
+      const text = await res.text()
+      let data: { error?: string } = {}
+      try { data = JSON.parse(text) } catch { throw new Error(`Server error (${res.status})`) }
+      if (!res.ok) throw new Error(data.error ?? 'Failed to change plan')
+      setToast(newPlan === 'team' ? 'Team plan granted' : 'Plan updated')
       await fetchUsers()
     } catch (e) {
       setToast(`Error: ${e instanceof Error ? e.message : 'Failed'}`)
@@ -143,7 +163,17 @@ export function AdminUsers() {
                     </div>
                   </td>
                   <td className="p-3 text-muted-foreground">{u.institution ?? '—'}</td>
-                  <td className="p-3"><Badge variant="secondary">{planOf(u)}</Badge></td>
+                  <td className="p-3">
+                    <select
+                      value={planOf(u)}
+                      disabled={pending === u.id}
+                      onChange={e => changePlan(u.id, e.target.value)}
+                      className="h-8 rounded-md border bg-background px-2 text-xs"
+                      title="Assign plan (Team is a manual enterprise grant, not billed via Stripe)"
+                    >
+                      {PLANS.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </td>
                   <td className="p-3">
                     <select
                       value={roleOf(u)}
