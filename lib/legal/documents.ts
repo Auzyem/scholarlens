@@ -433,7 +433,7 @@ export const LEGAL_DOCS: LegalDoc[] = [
       ]),
       p('Applicable consumer protection laws in your jurisdiction may provide additional rights.'),
 
-      h('5. Free Trial'),
+      h('5. Free and Promotional Access'),
       p('We may offer a free manuscript review or other promotional access.'),
       p('We reserve the right to withdraw, modify or discontinue free offers at any time.'),
 
@@ -734,15 +734,15 @@ export const LEGAL_DOCS: LegalDoc[] = [
       ]),
       p('We reserve the right to introduce, modify or discontinue subscription plans and features.'),
 
-      h('2. Free Access and Trials'),
-      p('We may offer free access, trial periods or promotional offers from time to time.'),
+      h('2. Free and Promotional Access'),
+      p('We may offer free access or promotional offers from time to time.'),
       p('Unless otherwise stated:'),
       ul([
         'free access is limited to the features and usage limits specified',
         'free access does not create any obligation for us to continue providing free access',
         'promotional offers may be subject to additional terms',
       ]),
-      p('Where a free trial converts into a paid subscription, we will clearly communicate this before charging payment.'),
+      p('Free access does not convert automatically into a paid subscription. Paid plans begin only when you choose one and are charged from the start of the subscription.'),
 
       h('3. Payment Terms'),
       p('Paid subscriptions are charged in advance on a recurring basis according to the billing frequency selected at purchase.'),

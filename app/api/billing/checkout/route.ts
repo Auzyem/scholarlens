@@ -52,9 +52,9 @@ export async function POST(request: NextRequest) {
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: `${appUrl}/billing?success=true&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${appUrl}/billing?canceled=true`,
+    // No trial_period_days on any plan — every subscription bills immediately.
     subscription_data: {
       metadata: { supabase_user_id: user.id, plan_id: planId },
-      ...(planId === 'pro' ? { trial_period_days: 7 } : {}),
     },
     allow_promotion_codes: true,
     billing_address_collection: 'auto',

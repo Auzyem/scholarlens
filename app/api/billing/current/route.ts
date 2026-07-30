@@ -10,7 +10,7 @@ export async function GET() {
   const [{ data: sub }, { data: roleRows }] = await Promise.all([
     supabase
       .from('subscriptions')
-      .select('plan_id, status, current_period_end, cancel_at_period_end, billing_interval, trial_end')
+      .select('plan_id, status, current_period_end, cancel_at_period_end, billing_interval')
       .eq('user_id', user.id)
       .single(),
     supabase.from('user_roles').select('role').eq('user_id', user.id),
@@ -22,7 +22,6 @@ export async function GET() {
     periodEnd: sub?.current_period_end ?? null,
     cancelAtEnd: sub?.cancel_at_period_end ?? false,
     interval: sub?.billing_interval ?? 'monthly',
-    trialEnd: sub?.trial_end ?? null,
     isSuperAdmin: (roleRows ?? []).some((r) => isSuperAdminRole(r.role)),
   })
 }

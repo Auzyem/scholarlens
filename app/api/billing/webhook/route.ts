@@ -9,7 +9,6 @@ import type Stripe from 'stripe'
 type SubWithPeriod = Stripe.Subscription & {
   current_period_end: number
   cancel_at_period_end: boolean
-  trial_end: number | null
 }
 
 async function syncSubscription(subscription: Stripe.Subscription) {
@@ -35,9 +34,12 @@ async function syncSubscription(subscription: Stripe.Subscription) {
   const planId = resolved?.planId ?? 'free'
   const interval = resolved?.interval ?? 'monthly'
 
+  // We no longer offer trials. Should a trial ever be applied out-of-band (e.g.
+  // manually in the Stripe dashboard), treat it as active rather than storing a
+  // 'trialing' status the subscriptions status constraint no longer allows.
   const status =
     subscription.status === 'active' || subscription.status === 'trialing'
-      ? subscription.status
+      ? 'active'
       : subscription.status === 'canceled'
       ? 'canceled'
       : 'past_due'
@@ -54,7 +56,6 @@ async function syncSubscription(subscription: Stripe.Subscription) {
       billing_interval: interval,
       current_period_end: new Date(s.current_period_end * 1000).toISOString(),
       cancel_at_period_end: s.cancel_at_period_end,
-      trial_end: s.trial_end ? new Date(s.trial_end * 1000).toISOString() : null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id' }
