@@ -24,6 +24,7 @@ export interface SubscriptionRow {
   stripe_subscription_id: string
   stripe_price_id: string
   billing_interval: Interval
+  current_period_start: string | null
   current_period_end: string | null
   cancel_at_period_end: boolean
   updated_at: string
@@ -45,6 +46,23 @@ export function subscriptionPeriodEnd(subscription: Stripe.Subscription): number
 
   const legacy = (subscription as Stripe.Subscription & { current_period_end?: number | null })
     .current_period_end
+  return typeof legacy === 'number' ? legacy : null
+}
+
+/**
+ * The period *start*, resolved exactly like `subscriptionPeriodEnd` above and
+ * for the same reason — it moved onto the subscription item in the same API
+ * version. Usage quotas are metered from this, so returning null (and letting
+ * the caller fall back to the calendar month) is the only safe miss.
+ */
+export function subscriptionPeriodStart(subscription: Stripe.Subscription): number | null {
+  const item = subscription.items?.data?.[0] as
+    | (Stripe.SubscriptionItem & { current_period_start?: number | null })
+    | undefined
+  if (typeof item?.current_period_start === 'number') return item.current_period_start
+
+  const legacy = (subscription as Stripe.Subscription & { current_period_start?: number | null })
+    .current_period_start
   return typeof legacy === 'number' ? legacy : null
 }
 
@@ -93,6 +111,7 @@ export function mapSubscriptionToRow(
   opts: { userId: string; planId: string; interval: Interval; now?: Date },
 ): SubscriptionRow {
   const periodEnd = subscriptionPeriodEnd(subscription)
+  const periodStart = subscriptionPeriodStart(subscription)
   return {
     user_id: opts.userId,
     plan_id: opts.planId,
@@ -101,6 +120,7 @@ export function mapSubscriptionToRow(
     stripe_subscription_id: subscription.id,
     stripe_price_id: subscription.items?.data?.[0]?.price?.id ?? '',
     billing_interval: opts.interval,
+    current_period_start: periodStart === null ? null : new Date(periodStart * 1000).toISOString(),
     current_period_end: periodEnd === null ? null : new Date(periodEnd * 1000).toISOString(),
     cancel_at_period_end: subscription.cancel_at_period_end ?? false,
     updated_at: (opts.now ?? new Date()).toISOString(),
@@ -221,6 +241,7 @@ export async function syncSubscriptionDeleted(subscription: Stripe.Subscription)
       status: 'free',
       stripe_subscription_id: null,
       stripe_price_id: null,
+      current_period_start: null,
       current_period_end: null,
       cancel_at_period_end: false,
       updated_at: new Date().toISOString(),
