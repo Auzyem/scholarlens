@@ -28,6 +28,7 @@ export function AdminPlans() {
   const [saving, setSaving] = useState<string | null>(null)
   const [edits, setEdits] = useState<Record<string, Plan>>({})
   const [toast, setToast] = useState<string | null>(null)
+  const [reconciling, setReconciling] = useState(false)
   const [confirm, setConfirm] = useState<{
     planId: string
     name: string
@@ -50,6 +51,26 @@ export function AdminPlans() {
 
   const change = (planId: string, field: string, value: unknown) => {
     setEdits(prev => ({ ...prev, [planId]: { ...prev[planId], [field]: value } }))
+  }
+
+  // Re-read live subscriptions from Stripe and make the database agree. The
+  // remedy when a customer paid but stayed on their old plan (missed webhook).
+  const reconcile = async () => {
+    setReconciling(true)
+    try {
+      const res = await fetch('/api/admin/billing/reconcile', { method: 'POST' })
+      const text = await res.text()
+      let data: { scanned?: number; syncedCount?: number; skipped?: number; error?: string } = {}
+      try { data = JSON.parse(text) } catch { throw new Error(`Server error (${res.status})`) }
+      if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`)
+      setToast(
+        `Reconciled ${data.syncedCount ?? 0} of ${data.scanned ?? 0} live Stripe subscription(s)` +
+        (data.skipped ? ` — ${data.skipped} could not be matched to a user` : ''),
+      )
+    } catch (e) {
+      setToast(`Error: ${e instanceof Error ? e.message : 'Reconcile failed'}`)
+    }
+    setReconciling(false)
   }
 
   // Which price fields differ from the loaded original?
@@ -234,6 +255,16 @@ export function AdminPlans() {
           <button onClick={() => setToast(null)} className="ml-2">×</button>
         </div>
       )}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border px-4 py-3">
+        <div className="text-sm text-muted-foreground">
+          Subscription sync — re-reads live Stripe subscriptions and corrects any user left on the
+          wrong plan (e.g. after a missed webhook).
+        </div>
+        <Button variant="outline" size="sm" onClick={reconcile} disabled={reconciling}>
+          {reconciling ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          Reconcile with Stripe
+        </Button>
+      </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {plans.map(plan => (
           <Card key={plan.id} className="p-4">

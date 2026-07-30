@@ -1,83 +1,55 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe/client'
-import { resolvePlanFromPriceId } from '@/lib/stripe/prices'
 import { createAdminClient } from '@/lib/supabase/admin'
+import {
+  subscriptionIdFromInvoice,
+  syncSubscriptionToDb,
+  syncSubscriptionDeleted,
+} from '@/lib/stripe/sync'
 import type Stripe from 'stripe'
 
-// Stripe SDK type drift: these fields exist at runtime but may not be on the
-// pinned Subscription type. Intersect to read them build-safely.
-type SubWithPeriod = Stripe.Subscription & {
-  current_period_end: number
-  cancel_at_period_end: boolean
-}
+/**
+ * Events we act on. Keep this list in sync with the endpoint's enabled events in
+ * the Stripe dashboard — an event Stripe isn't configured to send is an event
+ * that can never upgrade anybody, however correct this handler is.
+ */
+async function handleEvent(event: Stripe.Event): Promise<void> {
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      const session = event.data.object as Stripe.Checkout.Session
+      if (session.mode === 'subscription' && session.subscription) {
+        const id = typeof session.subscription === 'string' ? session.subscription : session.subscription.id
+        await syncSubscriptionToDb(await stripe.subscriptions.retrieve(id))
+      }
+      break
+    }
 
-async function syncSubscription(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.supabase_user_id
-  if (!userId) {
-    // Subscriptions created outside our checkout flow (e.g. the Stripe dashboard)
-    // won't carry our metadata — surface it rather than dropping silently.
-    console.warn(`[stripe webhook] subscription ${subscription.id} has no supabase_user_id metadata; skipping sync`)
-    return
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated':
+    case 'customer.subscription.resumed':
+      await syncSubscriptionToDb(event.data.object as Stripe.Subscription)
+      break
+
+    case 'customer.subscription.deleted':
+      await syncSubscriptionDeleted(event.data.object as Stripe.Subscription)
+      break
+
+    // Money actually moved (first charge, renewal, or a proration invoice from a
+    // plan switch) — re-read the subscription so entitlement follows payment even
+    // if the subscription.* event was missed or arrived out of order.
+    case 'invoice.payment_succeeded':
+    case 'invoice.paid':
+    case 'invoice.payment_failed': {
+      const subId = subscriptionIdFromInvoice(event.data.object as Stripe.Invoice)
+      if (subId) {
+        await syncSubscriptionToDb(await stripe.subscriptions.retrieve(subId))
+      }
+      break
+    }
+
+    default:
+      break
   }
-
-  const s = subscription as SubWithPeriod
-  const priceId = subscription.items.data[0]?.price?.id ?? ''
-  const resolved = await resolvePlanFromPriceId(priceId)
-  if (!resolved) {
-    // With the plan_prices history table this should not happen for our prices.
-    // Keep the safe 'free' default but log loudly so a real miss is never silent.
-    console.error(
-      `[stripe webhook] price ${priceId} on subscription ${subscription.id} did not ` +
-      `resolve to a plan; defaulting to free`,
-    )
-  }
-  const planId = resolved?.planId ?? 'free'
-  const interval = resolved?.interval ?? 'monthly'
-
-  // We no longer offer trials. Should a trial ever be applied out-of-band (e.g.
-  // manually in the Stripe dashboard), treat it as active rather than storing a
-  // 'trialing' status the subscriptions status constraint no longer allows.
-  const status =
-    subscription.status === 'active' || subscription.status === 'trialing'
-      ? 'active'
-      : subscription.status === 'canceled'
-      ? 'canceled'
-      : 'past_due'
-
-  const supabaseAdmin = createAdminClient()
-  await supabaseAdmin.from('subscriptions').upsert(
-    {
-      user_id: userId,
-      plan_id: planId,
-      status,
-      stripe_customer_id: subscription.customer as string,
-      stripe_subscription_id: subscription.id,
-      stripe_price_id: priceId,
-      billing_interval: interval,
-      current_period_end: new Date(s.current_period_end * 1000).toISOString(),
-      cancel_at_period_end: s.cancel_at_period_end,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id' }
-  )
-}
-
-async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
-  const userId = subscription.metadata?.supabase_user_id
-  if (!userId) return
-  const supabaseAdmin = createAdminClient()
-  await supabaseAdmin
-    .from('subscriptions')
-    .update({
-      plan_id: 'free',
-      status: 'free',
-      stripe_subscription_id: null,
-      stripe_price_id: null,
-      current_period_end: null,
-      cancel_at_period_end: false,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('user_id', userId)
 }
 
 export async function POST(request: NextRequest) {
@@ -114,32 +86,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to record event' }, { status: 500 })
   }
 
-  switch (event.type) {
-    case 'checkout.session.completed': {
-      const sessionObj = event.data.object as Stripe.Checkout.Session
-      if (sessionObj.mode === 'subscription' && sessionObj.subscription) {
-        const sub = await stripe.subscriptions.retrieve(sessionObj.subscription as string)
-        await syncSubscription(sub)
-      }
-      break
+  try {
+    await handleEvent(event)
+  } catch (err) {
+    // The marker row above makes retries idempotent, but it also makes them
+    // *skippable* — so a handler that threw would be dropped forever, leaving a
+    // paying customer on their old plan. Remove the marker so Stripe's retry
+    // reprocesses this event instead of short-circuiting on 23505.
+    const { error: cleanupError } = await supabaseAdmin
+      .from('billing_events')
+      .delete()
+      .eq('stripe_event_id', event.id)
+    if (cleanupError) {
+      console.error(
+        `[stripe webhook] event ${event.id} failed AND its marker could not be cleared ` +
+        `(${cleanupError.message}) — it will not be retried; reconcile manually`,
+      )
     }
-    case 'customer.subscription.created':
-    case 'customer.subscription.updated':
-      await syncSubscription(event.data.object as Stripe.Subscription)
-      break
-    case 'customer.subscription.deleted':
-      await handleSubscriptionDeleted(event.data.object as Stripe.Subscription)
-      break
-    case 'invoice.payment_failed': {
-      const invoice = event.data.object as Stripe.Invoice & { subscription?: string }
-      if (invoice.subscription) {
-        const sub = await stripe.subscriptions.retrieve(invoice.subscription)
-        await syncSubscription(sub)
-      }
-      break
-    }
-    default:
-      break
+    console.error(
+      `[stripe webhook] handler for ${event.type} (${event.id}) failed:`,
+      err instanceof Error ? err.message : err,
+    )
+    return NextResponse.json({ error: 'Handler failed' }, { status: 500 })
   }
 
   return NextResponse.json({ ok: true })

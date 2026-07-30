@@ -2,6 +2,24 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe/client'
 import { getActivePriceId } from '@/lib/stripe/prices'
+import { syncSubscriptionToDb } from '@/lib/stripe/sync'
+import type Stripe from 'stripe'
+
+// Statuses whose subscription can be re-priced in place. Anything else (canceled,
+// incomplete_expired) is finished — that customer needs a fresh checkout.
+const SWITCHABLE: Stripe.Subscription.Status[] = ['active', 'trialing', 'past_due', 'unpaid']
+
+/**
+ * The customer's live subscription, if any. Stripe is the source of truth here
+ * rather than our own stripe_subscription_id, which may be stale (or null) if a
+ * webhook was ever missed — and a stale read is exactly how you end up billing
+ * someone twice.
+ */
+async function findSwitchableSubscription(customerId: string): Promise<Stripe.Subscription | null> {
+  const subs = await stripe.subscriptions.list({ customer: customerId, status: 'all', limit: 100 })
+  const switchable = subs.data.filter((s) => SWITCHABLE.includes(s.status))
+  return switchable.find((s) => s.status === 'active') ?? switchable[0] ?? null
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,6 +63,36 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Invalid plan' }, { status: 400 })
   }
 
+  // Plan change for an existing subscriber: re-price the subscription they
+  // already have. Opening a second Checkout Session (what this route used to do
+  // for everyone) creates a SECOND parallel subscription in Stripe — the customer
+  // is charged for both, the old one keeps renewing, and because our
+  // subscriptions row is keyed by user_id only one of them is ever reflected.
+  const existing = await findSwitchableSubscription(customerId)
+  if (existing) {
+    const item = existing.items.data[0]
+    if (!item) {
+      return NextResponse.json({ error: 'Subscription has no billable item' }, { status: 500 })
+    }
+    if (item.price?.id === priceId) {
+      return NextResponse.json({ error: 'You are already on this plan' }, { status: 400 })
+    }
+
+    // always_invoice bills the prorated difference now; error_if_incomplete makes
+    // the call fail rather than move the customer to a plan they haven't paid for.
+    const updated = await stripe.subscriptions.update(existing.id, {
+      items: [{ id: item.id, price: priceId }],
+      proration_behavior: 'always_invoice',
+      payment_behavior: 'error_if_incomplete',
+      metadata: { supabase_user_id: user.id, plan_id: planId },
+    })
+
+    // Sync straight away instead of waiting on the webhook, so the plan is live
+    // by the time the browser refreshes. The webhook re-syncs the same state.
+    await syncSubscriptionToDb(updated)
+    return NextResponse.json({ upgraded: true, plan: planId, interval })
+  }
+
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? ''
   const session = await stripe.checkout.sessions.create({
     customer: customerId,
@@ -66,6 +114,12 @@ export async function POST(request: NextRequest) {
   } catch (error: unknown) {
     console.error('[api/billing/checkout] error:', error)
     const message = error instanceof Error ? error.message : 'Checkout failed'
+    // A declined card on an in-place plan switch is the customer's problem to fix,
+    // not a server fault — say so with 402 so the UI shows the decline reason.
+    const type = (error as { type?: string })?.type
+    if (type === 'StripeCardError') {
+      return NextResponse.json({ error: message }, { status: 402 })
+    }
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }
