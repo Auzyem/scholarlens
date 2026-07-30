@@ -53,14 +53,15 @@ export default function BillingPage() {
       .catch(() => setPlans([]))
   }, [])
 
+  async function fetchCurrent() {
+    const res = await fetch('/api/billing/current')
+    const d = await res.json()
+    setCurrentPlan(d.plan ?? 'free')
+    setPeriodEnd(d.periodEnd ?? null)
+    setCancelAtEnd(d.cancelAtEnd ?? false)
+  }
+
   useEffect(() => {
-    async function fetchCurrent() {
-      const res = await fetch('/api/billing/current')
-      const d = await res.json()
-      setCurrentPlan(d.plan ?? 'free')
-      setPeriodEnd(d.periodEnd ?? null)
-      setCancelAtEnd(d.cancelAtEnd ?? false)
-    }
     fetchCurrent()
     if (success) setToast({ type: 'success', message: 'Subscription activated — welcome!' })
     if (canceled) setToast({ type: 'error', message: 'Checkout canceled — no charge made.' })
@@ -77,11 +78,19 @@ export default function BillingPage() {
       })
       // Never call .json() on a potentially-empty body.
       const text = await res.text()
-      let data: { url?: string; error?: string } = {}
+      let data: { url?: string; upgraded?: boolean; error?: string } = {}
       try { data = JSON.parse(text) } catch {
         throw new Error(`Server error (${res.status}): ${text.slice(0, 200) || 'Empty response'}`)
       }
       if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`)
+      // Existing subscribers are switched in place (no Checkout redirect) — the
+      // prorated difference is charged immediately, so just show the new plan.
+      if (data.upgraded) {
+        await fetchCurrent()
+        setToast({ type: 'success', message: `You are now on the ${planId[0].toUpperCase() + planId.slice(1)} plan.` })
+        setLoading(null)
+        return
+      }
       if (!data.url) throw new Error('No checkout URL returned')
       window.location.href = data.url
     } catch (e) {
