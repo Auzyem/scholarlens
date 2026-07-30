@@ -132,9 +132,37 @@ export async function resolveUserId(subscription: Stripe.Subscription): Promise<
 
 export interface SyncResult {
   synced: boolean
-  reason?: 'no_user' | 'ok'
+  reason?: 'no_user' | 'foreign_price' | 'ok'
   userId?: string
   planId?: string
+}
+
+/**
+ * Is this subscription ours at all?
+ *
+ * This Stripe account is shared with another application, and a Stripe webhook
+ * endpoint receives every event of its subscribed types generated anywhere in the
+ * account — there is no per-application routing. So ownership has to be decided
+ * here, and the test is the price: a subscription counts as ours only when its
+ * price resolves to one of our plans (via the plan_prices history table, which
+ * includes archived prices, or the STRIPE_PRICE_* env fallback).
+ *
+ * Returns null for a subscription that belongs to another application.
+ */
+async function resolveOwnPlan(
+  subscription: Stripe.Subscription,
+): Promise<{ planId: string; interval: Interval } | null> {
+  const priceId = subscription.items?.data?.[0]?.price?.id ?? ''
+  const resolved = await resolvePlanFromPriceId(priceId)
+  if (!resolved) {
+    console.warn(
+      `[stripe sync] subscription ${subscription.id} is priced with ${priceId || '(no price)'}, ` +
+      `which is not one of our plan prices — ignoring it (this Stripe account is shared with ` +
+      `other applications). If this IS one of ours, its price is missing from plan_prices.`,
+    )
+    return null
+  }
+  return resolved
 }
 
 /**
@@ -143,6 +171,13 @@ export interface SyncResult {
  * error here means a paying customer silently stays on their old plan.
  */
 export async function syncSubscriptionToDb(subscription: Stripe.Subscription): Promise<SyncResult> {
+  // Ownership first: never let another application's subscription reach our table.
+  // This also protects the customer-id fallback below — a shared Stripe customer
+  // used to be enough to overwrite one of our users, and an unresolvable price
+  // used to be written as plan_id 'free', stripping a paying subscriber's plan.
+  const resolved = await resolveOwnPlan(subscription)
+  if (!resolved) return { synced: false, reason: 'foreign_price' }
+
   const userId = await resolveUserId(subscription)
   if (!userId) {
     console.warn(
@@ -152,21 +187,10 @@ export async function syncSubscriptionToDb(subscription: Stripe.Subscription): P
     return { synced: false, reason: 'no_user' }
   }
 
-  const priceId = subscription.items?.data?.[0]?.price?.id ?? ''
-  const resolved = await resolvePlanFromPriceId(priceId)
-  if (!resolved) {
-    // With the plan_prices history table this should not happen for our prices.
-    // Keep the safe 'free' default but log loudly so a real miss is never silent.
-    console.error(
-      `[stripe sync] price ${priceId} on subscription ${subscription.id} did not resolve to a ` +
-      `plan; defaulting to free`,
-    )
-  }
-
   const row = mapSubscriptionToRow(subscription, {
     userId,
-    planId: resolved?.planId ?? 'free',
-    interval: resolved?.interval ?? 'monthly',
+    planId: resolved.planId,
+    interval: resolved.interval,
   })
 
   const admin = createAdminClient()
@@ -182,6 +206,10 @@ export async function syncSubscriptionToDb(subscription: Stripe.Subscription): P
 
 /** A subscription ending returns the user to the free plan. */
 export async function syncSubscriptionDeleted(subscription: Stripe.Subscription): Promise<SyncResult> {
+  // Same ownership gate as the upsert path: another application cancelling a
+  // subscription for a customer we happen to share must not downgrade our user.
+  if (!(await resolveOwnPlan(subscription))) return { synced: false, reason: 'foreign_price' }
+
   const userId = await resolveUserId(subscription)
   if (!userId) return { synced: false, reason: 'no_user' }
 

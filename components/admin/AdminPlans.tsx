@@ -60,12 +60,15 @@ export function AdminPlans() {
     try {
       const res = await fetch('/api/admin/billing/reconcile', { method: 'POST' })
       const text = await res.text()
-      let data: { scanned?: number; syncedCount?: number; skipped?: number; error?: string } = {}
+      let data: {
+        scanned?: number; syncedCount?: number; foreign?: number; unmatched?: number; error?: string
+      } = {}
       try { data = JSON.parse(text) } catch { throw new Error(`Server error (${res.status})`) }
       if (!res.ok) throw new Error(data.error ?? `Server error ${res.status}`)
       setToast(
         `Reconciled ${data.syncedCount ?? 0} of ${data.scanned ?? 0} live Stripe subscription(s)` +
-        (data.skipped ? ` — ${data.skipped} could not be matched to a user` : ''),
+        (data.foreign ? ` — ${data.foreign} belong to another app on this Stripe account` : '') +
+        (data.unmatched ? ` — ${data.unmatched} could not be matched to a user` : ''),
       )
     } catch (e) {
       setToast(`Error: ${e instanceof Error ? e.message : 'Reconcile failed'}`)

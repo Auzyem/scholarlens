@@ -19,7 +19,10 @@ export async function POST() {
     await requirePermission('billing.edit_plans')
 
     let scanned = 0
-    let skipped = 0
+    let unmatched = 0
+    // Subscriptions belonging to another application on this shared Stripe
+    // account — expected, and not a problem worth surfacing as a failure.
+    let foreign = 0
     const synced: { userId: string; planId: string; subscriptionId: string }[] = []
 
     for await (const sub of stripe.subscriptions.list({ status: 'all', limit: 100 })) {
@@ -28,12 +31,14 @@ export async function POST() {
       const result = await syncSubscriptionToDb(sub)
       if (result.synced && result.userId && result.planId) {
         synced.push({ userId: result.userId, planId: result.planId, subscriptionId: sub.id })
+      } else if (result.reason === 'foreign_price') {
+        foreign++
       } else {
-        skipped++
+        unmatched++
       }
     }
 
-    return NextResponse.json({ scanned, syncedCount: synced.length, skipped, synced })
+    return NextResponse.json({ scanned, syncedCount: synced.length, foreign, unmatched, synced })
   } catch (error) {
     return permissionErrorResponse(error)
   }
