@@ -87,4 +87,36 @@ describe('scrubEvent', () => {
   it('tolerates an event with none of those fields', () => {
     expect(() => scrubEvent({ message: 'hello' })).not.toThrow()
   })
+
+  it('strips local-variable values off stack frames', () => {
+    // Sentry's LocalVariables integration attaches the VALUES of locals to
+    // frames on an uncaught exception. manuscriptText / parsed_text / abstract
+    // are all locals inside the review pipelines, so this is a direct leak path
+    // that scrubbing extra and contexts would never catch.
+    const event = {
+      exception: {
+        values: [
+          {
+            stacktrace: {
+              frames: [
+                { filename: 'pipeline.ts', lineno: 120, vars: { manuscriptText: MANUSCRIPT } },
+                { filename: 'other.ts', lineno: 3 },
+              ],
+            },
+          },
+        ],
+      },
+    }
+    const out = scrubEvent(event as unknown as Record<string, unknown>)
+    expect(JSON.stringify(out)).not.toContain('soil moisture')
+    // The frame itself must survive — filenames and line numbers are the point.
+    expect(JSON.stringify(out)).toContain('pipeline.ts')
+    expect(JSON.stringify(out)).toContain('120')
+  })
+
+  it('tolerates malformed exception shapes', () => {
+    expect(() => scrubEvent({ exception: {} })).not.toThrow()
+    expect(() => scrubEvent({ exception: { values: [{}] } })).not.toThrow()
+    expect(() => scrubEvent({ exception: { values: [{ stacktrace: {} }] } })).not.toThrow()
+  })
 })

@@ -59,9 +59,33 @@ export function scrubValue(value: unknown, seen: WeakSet<object> = new WeakSet()
   return out
 }
 
-/** Sentry `beforeSend`: scrub extra, contexts and breadcrumb data. */
+/**
+ * Strip local-variable values off stack frames.
+ *
+ * Sentry's LocalVariables integration attaches the *values* of locals to frames
+ * on an uncaught exception. `manuscriptText`, `parsed_text` and `abstract` are
+ * all locals inside the pipeline functions, so this is a direct route for
+ * manuscript content to leave the process — and one that no amount of scrubbing
+ * `extra` or `contexts` would catch.
+ *
+ * The integration is also disabled in the runtime configs. This is the
+ * belt-and-braces half: filenames and line numbers are what we actually need
+ * for debugging, and variable values are never worth the risk here.
+ */
+function stripFrameVars(event: Record<string, unknown>): void {
+  const exception = event.exception as { values?: Array<Record<string, unknown>> } | undefined
+  for (const value of exception?.values ?? []) {
+    const stacktrace = value.stacktrace as { frames?: Array<Record<string, unknown>> } | undefined
+    for (const frame of stacktrace?.frames ?? []) {
+      delete frame.vars
+    }
+  }
+}
+
+/** Sentry `beforeSend`: scrub extra, contexts, breadcrumbs and frame locals. */
 export function scrubEvent<T extends Record<string, unknown>>(event: T): T {
   const e = event as Record<string, unknown>
+  stripFrameVars(e)
   if (e.extra) e.extra = scrubValue(e.extra)
   if (e.contexts) e.contexts = scrubValue(e.contexts)
   if (Array.isArray(e.breadcrumbs)) {
