@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { quotaWindowStart } from '@/lib/plan/period'
 
 export type PlanFeature =
   | 'adversarial_access'
@@ -27,12 +28,13 @@ async function isSuperAdmin(userId: string): Promise<boolean> {
 async function getUserPlan(userId: string, admin: ReturnType<typeof createAdminClient>) {
   const { data } = await admin
     .from('subscriptions')
-    .select('plan_id, plans(*)')
+    .select('plan_id, current_period_start, plans(*)')
     .eq('user_id', userId)
     .single()
   return {
     planId: data?.plan_id ?? 'free',
     plan: (data?.plans as unknown as Record<string, unknown> | null) ?? null,
+    periodStart: (data?.current_period_start as string | null | undefined) ?? null,
   }
 }
 
@@ -77,7 +79,7 @@ export async function checkReviewLimit(
   }
 
   const admin = createAdminClient()
-  const { planId, plan } = await getUserPlan(userId, admin)
+  const { planId, plan, periodStart } = await getUserPlan(userId, admin)
   // `?? 2` would also fire on an explicit `null` (unlimited) — only default
   // when there's no plan row at all.
   const rawLimit = plan ? (plan.max_reviews_per_month as number | null) : 2
@@ -95,14 +97,18 @@ export async function checkReviewLimit(
   const draftIds = (drafts ?? []).map((d) => d.id)
   if (draftIds.length === 0) return { allowed: true, used: 0, limit, plan: planId }
 
-  const startOfMonth = new Date()
-  startOfMonth.setDate(1)
-  startOfMonth.setHours(0, 0, 0, 0)
+  // Anchored to the subscription's billing period, not the calendar month.
+  const windowStart = quotaWindowStart(periodStart, new Date())
 
+  // A failed review produced nothing, so it must not consume the user's
+  // allowance — whether it failed normally or was reaped after its pipeline
+  // died. The hourly abuse cap in review/start remains the backstop against
+  // someone looping deliberately.
   const { count } = await admin
     .from('review_sessions')
     .select('*', { count: 'exact', head: true })
-    .gte('created_at', startOfMonth.toISOString())
+    .gte('created_at', windowStart.toISOString())
+    .neq('status', 'failed')
     .in('draft_id', draftIds)
 
   const used = count ?? 0

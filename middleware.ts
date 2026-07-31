@@ -23,8 +23,13 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
 
   const pathname = request.nextUrl.pathname
-  const publicPaths = ['/', '/login', '/signup', '/api', '/auth', '/legal']
-  const isPublic = publicPaths.some(p => pathname.startsWith(p))
+
+  // Prefix-matched public trees. '/' is deliberately NOT in this list: every
+  // pathname starts with '/', so including it made `isPublic` unconditionally
+  // true and the redirect below unreachable — the guard silently protected
+  // nothing. The marketing root is matched exactly instead.
+  const publicPrefixes = ['/login', '/signup', '/api', '/auth', '/legal']
+  const isPublic = pathname === '/' || publicPrefixes.some(p => pathname.startsWith(p))
   const isAuthPage = pathname === '/login' || pathname === '/signup'
 
   if (!user && !isPublic) {
@@ -40,5 +45,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // Also skips any path with a file extension (`/icon.png`, `/robots.txt`, …).
+  // Those are public assets, and now that the auth redirect above actually
+  // fires, a logged-out visitor requesting one would otherwise be bounced to
+  // /login and the asset would fail to load on the marketing page.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)'],
 }

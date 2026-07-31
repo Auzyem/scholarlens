@@ -11,6 +11,11 @@ export async function runAdversarialPipeline(sessionId: string) {
       .update({ adversarial_status: 'running' })
       .eq('id', sessionId)
 
+    // This pass can legitimately run more than once (a retry after a failure or
+    // after the reaper). Rows are written with a plain insert, so clear what a
+    // previous attempt wrote or the critique list silently doubles.
+    await supabase.from('adversarial_critiques').delete().eq('session_id', sessionId)
+
     const { data: session, error } = await supabase
       .from('review_sessions')
       .select('*, scores(*), drafts(*, manuscripts(*))')

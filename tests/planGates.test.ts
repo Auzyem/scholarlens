@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest'
 // 'server-only') never loads under Vitest, following the pattern in
 // tests/stripePrices.test.ts. Each table gets one canned response per test —
 // every gate function under test queries a given table at most once per call.
-function mockAdmin(responses: Record<string, unknown>) {
+function mockAdmin(responses: Record<string, unknown>, neqCalls: [string, unknown][] = []) {
   return {
     from: vi.fn((table: string) => {
       const result = responses[table] ?? { data: null, count: 0 }
@@ -12,6 +12,12 @@ function mockAdmin(responses: Record<string, unknown>) {
       for (const m of ['select', 'eq', 'gte', 'in', 'order']) {
         builder[m] = vi.fn(() => builder)
       }
+      // Recorded rather than merely chainable: the quota-release behaviour IS
+      // the neq filter, so a test needs to assert it was applied.
+      builder.neq = vi.fn((col: string, val: unknown) => {
+        neqCalls.push([col, val])
+        return builder
+      })
       builder.single = vi.fn(async () => result)
       builder.maybeSingle = vi.fn(async () => result)
       // Postgrest query builders are thenable — awaiting the builder itself
@@ -110,6 +116,24 @@ describe('checkReviewLimit', () => {
   it('bypasses entirely for super_admin', async () => {
     h.admin = mockAdmin({ user_roles: superAdmin })
     await expect(checkReviewLimit('u1')).resolves.toMatchObject({ allowed: true, plan: 'super_admin' })
+  })
+
+  it('excludes failed sessions from the count', async () => {
+    // A review that produced nothing must not consume the user's allowance —
+    // whether it failed normally or was reaped after its pipeline died.
+    const neqCalls: [string, unknown][] = []
+    h.admin = mockAdmin({
+      user_roles: notSuperAdmin,
+      subscriptions: { data: { plan_id: 'starter', plans: { max_reviews_per_month: 4 } } },
+      manuscripts: { data: [{ id: 'm1' }] },
+      drafts: { data: [{ id: 'd1' }] },
+      review_sessions: { count: 1 },
+    }, neqCalls)
+
+    const result = await checkReviewLimit('u1')
+
+    expect(neqCalls).toContainEqual(['status', 'failed'])
+    expect(result).toEqual({ allowed: true, used: 1, limit: 4, plan: 'starter' })
   })
 })
 
