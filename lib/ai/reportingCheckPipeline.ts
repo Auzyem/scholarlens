@@ -18,6 +18,10 @@ export async function runReportingCheckPipeline(sessionId: string) {
       .update({ reporting_check_status: 'running' })
       .eq('id', sessionId)
 
+    // Retries re-run this pass; rows are inserted, not upserted, so clear what a
+    // previous attempt wrote or the checklist silently doubles.
+    await supabase.from('reporting_checklist_items').delete().eq('session_id', sessionId)
+
     const { data: session, error } = await supabase
       .from('review_sessions')
       .select('*, drafts(*, manuscripts(*))')
