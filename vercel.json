@@ -8,6 +8,15 @@
     },
     "app/api/billing/webhook/route.ts": {
       "maxDuration": 30
+    },
+    "app/api/cron/reap-reviews/route.ts": {
+      "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/reap-reviews",
+      "schedule": "*/5 * * * *"
+    }
+  ]
 }
