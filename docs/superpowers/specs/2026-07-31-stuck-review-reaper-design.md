@@ -260,13 +260,33 @@ design survived the platform constraint without a single code change.
 Production environment, and the repo's Actions secrets. If they drift, the
 workflow fails with a 401 every five minutes.
 
-GitHub's scheduled runs are best-effort and often 5–15 minutes late. That is
-acceptable here: lateness only delays cleanup of an already-dead session and
-cannot cause a live one to be reaped, because the route re-checks the threshold
-itself rather than trusting the caller's timing.
+> **Corrected again, same day, after measurement.** The claim below — that
+> GitHub's schedules are "often 5–15 minutes late" but acceptable — was too
+> generous. Measured over the first four hours in production, the `*/5` workflow
+> produced **1 run instead of ~47**: GitHub aggressively throttles
+> high-frequency schedules. That is not lateness, it is non-delivery, and a
+> sweep arriving hours late largely defeats a feature whose point is that a user
+> is not left watching a spinner.
+>
+> **Current arrangement:** an **external cron service** drives the ~5-minute
+> cadence (see `docs/CRON-SETUP.md`), and the GitHub workflow drops to **hourly
+> as a free, independent backstop**. Two schedulers is deliberate — the sweep is
+> idempotent, concurrency-guarded, and its updates are conditional, so duplicate
+> runs are harmless.
+>
+> The lesson worth keeping: *a scheduler that looks configured can silently
+> under-deliver.* Both Vercel Cron and GitHub Actions failed in ways that
+> produced no error anywhere. Verify cadence by counting actual runs, not by
+> reading config.
 
-Moving back to Vercel Cron later is deleting the workflow and restoring the
-`crons` entry.
+Lateness of any degree remains safe in itself: it only delays cleanup of an
+already-dead session and cannot cause a live one to be reaped, because the route
+re-checks the threshold itself rather than trusting the caller's timing.
+
+Switching scheduler again is a config change either way, because the route
+authenticates on a **secret rather than caller identity** — the property that
+has now absorbed two platform constraints without one line of application code
+changing.
 
 ### 5. Quota release — `lib/plan/gates.ts`
 
