@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { stripe } from '@/lib/stripe/client'
 import { getActivePriceId } from '@/lib/stripe/prices'
 import { syncSubscriptionToDb } from '@/lib/stripe/sync'
+import { prorationStrategy } from '@/lib/stripe/planChange'
 import type Stripe from 'stripe'
 
 // Statuses whose subscription can be re-priced in place. Anything else (canceled,
@@ -78,12 +79,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'You are already on this plan' }, { status: 400 })
     }
 
-    // always_invoice bills the prorated difference now; error_if_incomplete makes
-    // the call fail rather than move the customer to a plan they haven't paid for.
+    // Ask Stripe what this change actually invoices before choosing how to
+    // prorate it — an upgrade must be collected now, a downgrade should credit
+    // forward, and only the preview knows which this is (see planChange.ts).
+    let amountDueNow: number | null = null
+    try {
+      const preview = await stripe.invoices.createPreview({
+        customer: customerId,
+        subscription: existing.id,
+        subscription_details: {
+          items: [{ id: item.id, price: priceId }],
+          proration_behavior: 'always_invoice',
+        },
+      })
+      amountDueNow = preview.amount_due
+    } catch (previewError) {
+      // Fail closed: prorationStrategy(null) collects rather than granting a plan
+      // we could not price.
+      console.warn(
+        '[api/billing/checkout] proration preview failed; defaulting to collect-now:',
+        previewError instanceof Error ? previewError.message : previewError,
+      )
+    }
+
     const updated = await stripe.subscriptions.update(existing.id, {
       items: [{ id: item.id, price: priceId }],
-      proration_behavior: 'always_invoice',
-      payment_behavior: 'error_if_incomplete',
+      ...prorationStrategy(amountDueNow),
       metadata: { supabase_user_id: user.id, plan_id: planId },
     })
 
