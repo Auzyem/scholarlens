@@ -10,6 +10,10 @@ export async function runJournalMatchPipeline(sessionId: string) {
       .update({ journal_match_status: 'running' })
       .eq('id', sessionId)
 
+    // Retries re-run this pass; rows are inserted, not upserted, so clear what a
+    // previous attempt wrote or the match list silently doubles.
+    await supabase.from('journal_matches').delete().eq('session_id', sessionId)
+
     const { data: session, error } = await supabase
       .from('review_sessions')
       .select('*, drafts(*, manuscripts(*))')

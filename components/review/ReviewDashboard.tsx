@@ -1,6 +1,7 @@
 'use client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Progress } from '@/components/ui/progress'
+import { Button } from '@/components/ui/button'
 import { FieldConfirm } from './FieldConfirm'
 import { PdfReportModal } from './PdfReportModal'
 import { ReviewStages } from './ReviewStages'
@@ -24,6 +25,8 @@ export function ReviewDashboard({ sessionId, manuscriptId }: { sessionId: string
   const [startingJournals, setStartingJournals] = useState(false)
   const [startingReporting, setStartingReporting] = useState(false)
   const [showPdf, setShowPdf] = useState(false)
+  const [retrying, setRetrying] = useState(false)
+  const [retryError, setRetryError] = useState<string | null>(null)
   const [activeSection, setActiveSection] = useState<SectionId>('overview')
   const activeRef = useRef(true)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -122,7 +125,41 @@ export function ReviewDashboard({ sessionId, manuscriptId }: { sessionId: string
   if (!session) return <p>Loading review…</p>
 
   if (session.status === 'failed') {
-    return <p className="text-destructive">Review failed: {session.error_message}</p>
+    return (
+      <div className="space-y-3 rounded-lg border p-4">
+        <p className="text-destructive">
+          {session.error_message ?? 'The review failed.'}
+        </p>
+        {retryError && <p className="text-sm text-destructive">{retryError}</p>}
+        <Button
+          size="sm"
+          disabled={retrying}
+          onClick={async () => {
+            setRetrying(true)
+            setRetryError(null)
+            try {
+              const res = await fetch('/api/review/retry', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionId }),
+              })
+              if (!res.ok) {
+                const body = await res.json().catch(() => null)
+                throw new Error(body?.error ?? `Retry failed (${res.status})`)
+              }
+              applySession({ ...session, status: 'queued', error_message: undefined })
+              poll()
+            } catch (e) {
+              setRetryError(e instanceof Error ? e.message : 'Retry failed')
+            } finally {
+              setRetrying(false)
+            }
+          }}
+        >
+          {retrying ? 'Restarting…' : 'Retry review'}
+        </Button>
+      </div>
+    )
   }
 
   if (session.status === 'awaiting_confirmation') {
