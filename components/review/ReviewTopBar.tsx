@@ -1,3 +1,5 @@
+'use client'
+import { useState } from 'react'
 import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -19,6 +21,30 @@ export function ReviewTopBar({
   manuscriptId: string
   onOpenPdf: () => void
 }) {
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  // Fetch rather than a plain `<a download>`: the route is plan-gated, and a
+  // bare anchor would save the 403 JSON body to disk as a ".xlsx" the user
+  // can't open. Going through fetch lets the upgrade message actually surface.
+  async function handleExport() {
+    setExportError(null)
+    try {
+      const res = await fetch(`/api/export/${sessionId}`)
+      if (!res.ok) {
+        const body = await res.json().catch(() => null)
+        throw new Error(body?.error ?? `Export failed (${res.status})`)
+      }
+      const url = URL.createObjectURL(await res.blob())
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `scholarlens-review-${sessionId}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : 'Export failed')
+    }
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-card px-4 py-3">
       <span className="rounded-full border px-2.5 py-1 text-xs font-medium text-muted-foreground">
@@ -28,13 +54,14 @@ export function ReviewTopBar({
       <span className="text-lg font-semibold">{score} / 80</span>
       <div className="ml-auto flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={onOpenPdf}>PDF report</Button>
-        <Button asChild variant="outline" size="sm">
-          <a href={`/api/export/${sessionId}`} download>.xlsx</a>
-        </Button>
+        <Button variant="outline" size="sm" onClick={handleExport}>.xlsx</Button>
         <Button asChild size="sm">
           <Link href={`/manuscripts/${manuscriptId}/upload`}>Upload revision</Link>
         </Button>
       </div>
+      {exportError && (
+        <p className="w-full text-right text-sm text-destructive">{exportError}</p>
+      )}
     </div>
   )
 }

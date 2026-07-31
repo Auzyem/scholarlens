@@ -37,6 +37,7 @@ vi.mock('@/lib/stripe/prices', () => ({
 
 import {
   subscriptionPeriodEnd,
+  subscriptionPeriodStart,
   subscriptionIdFromInvoice,
   mapStatus,
   mapSubscriptionToRow,
@@ -60,6 +61,7 @@ function dahliaSubscription(overrides: Record<string, unknown> = {}) {
       data: [
         {
           id: 'si_123',
+          current_period_start: 1785512713,
           current_period_end: 1788104713,
           price: { id: 'price_starter_monthly' },
         },
@@ -76,6 +78,7 @@ function legacySubscription() {
     status: 'active',
     customer: 'cus_legacy',
     cancel_at_period_end: true,
+    current_period_start: 1697408000,
     current_period_end: 1700000000,
     metadata: { supabase_user_id: 'user-2' },
     items: { data: [{ id: 'si_legacy', price: { id: 'price_pro_monthly' } }] },
@@ -94,6 +97,23 @@ describe('subscriptionPeriodEnd', () => {
   it('returns null rather than NaN when neither shape carries a period', () => {
     const bare = { id: 'sub_bare', items: { data: [{ id: 'si', price: { id: 'p' } }] } } as unknown as Stripe.Subscription
     expect(subscriptionPeriodEnd(bare)).toBeNull()
+  })
+})
+
+describe('subscriptionPeriodStart', () => {
+  it('reads the period start from the subscription item (dahlia shape)', () => {
+    expect(subscriptionPeriodStart(dahliaSubscription())).toBe(1785512713)
+  })
+
+  it('falls back to the legacy top-level field for older webhook API versions', () => {
+    expect(subscriptionPeriodStart(legacySubscription())).toBe(1697408000)
+  })
+
+  it('returns null rather than NaN when neither shape carries a period', () => {
+    // Quotas meter from this; null makes the gate fall back to the calendar
+    // month, whereas NaN would produce an invalid window bound.
+    const bare = { id: 'sub_bare', items: { data: [{ id: 'si', price: { id: 'p' } }] } } as unknown as Stripe.Subscription
+    expect(subscriptionPeriodStart(bare)).toBeNull()
   })
 })
 
@@ -132,6 +152,16 @@ describe('mapSubscriptionToRow', () => {
     } as unknown as Stripe.Subscription
     const row = mapSubscriptionToRow(bare, { userId: 'u', planId: 'pro', interval: 'annual' })
     expect(row.current_period_end).toBeNull()
+    expect(row.current_period_start).toBeNull()
+  })
+
+  it('records the period start the quota window is anchored to', () => {
+    const row = mapSubscriptionToRow(dahliaSubscription(), {
+      userId: 'user-1',
+      planId: 'starter',
+      interval: 'monthly',
+    })
+    expect(row.current_period_start).toBe(new Date(1785512713 * 1000).toISOString())
   })
 })
 
