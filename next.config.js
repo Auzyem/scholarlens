@@ -4,6 +4,9 @@ const { withSentryConfig } = require('@sentry/nextjs')
 const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: ['pdf-parse', 'mammoth'],
+    // Required on Next 14 for instrumentation.ts to run at all, which is what
+    // loads the server/edge Sentry configs. Stable from Next 15.
+    instrumentationHook: true,
   },
 }
 
