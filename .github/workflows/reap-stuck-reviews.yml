@@ -13,8 +13,25 @@ name: Reap stuck reviews
 # problem being solved is a user watching a spinner that never resolves.
 #
 # The endpoint authenticates on a bearer secret rather than on caller identity,
-# so any scheduler holding CRON_SECRET works. Moving back to vercel.json later
-# is just deleting this file and restoring the `crons` entry.
+# so ANY scheduler holding CRON_SECRET works. That is what has let the schedule
+# move twice without a single line of application code changing.
+#
+# THIS WORKFLOW IS THE BACKSTOP, NOT THE PRIMARY SCHEDULE.
+# It originally ran '*/5 * * * *'. Measured over the first four hours in
+# production that produced exactly ONE run instead of ~47: GitHub aggressively
+# throttles high-frequency schedules, and a sweep arriving hours late largely
+# defeats a feature whose point is that a user is not left watching a spinner.
+#
+# So the 5-minute cadence is driven by an external cron service hitting the same
+# endpoint (see docs/CRON-SETUP.md), and this workflow drops to hourly as a
+# free, independent safety net for when that service is down or its account
+# lapses. Two schedulers is deliberate: the sweep is idempotent, guarded by a
+# concurrency group, and its updates are conditional, so a duplicate run is
+# harmless.
+#
+# Offset to :23 rather than :00 — GitHub documents the top of the hour as its
+# highest-load window, and that is exactly when a schedule is most likely to be
+# dropped.
 #
 # SETUP
 #   1. Repo → Settings → Secrets and variables → Actions → New repository secret
@@ -23,18 +40,16 @@ name: Reap stuck reviews
 #      default production origin below.
 #
 # CAVEATS
-#   - GitHub's scheduled runs are best-effort and commonly 5-15 minutes late.
-#     That is acceptable here: being late only delays cleanup of an already-dead
-#     session, it cannot cause a live one to be reaped (the route re-checks the
-#     10-minute threshold itself).
 #   - GitHub disables scheduled workflows after 60 days with no repo activity.
+#     This is a backstop, so that is survivable; the external service is not
+#     subject to it.
 #   - Schedules only run from the default branch.
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '23 * * * *'
   # Lets you trigger a sweep by hand from the Actions tab — used by the
-  # verification pass, and for confirming setup without waiting 5 minutes.
+  # verification pass, and for confirming setup without waiting for a schedule.
   workflow_dispatch:
 
 # Never let two sweeps overlap. The route's updates are individually safe, but
