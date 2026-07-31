@@ -100,10 +100,15 @@ export async function checkReviewLimit(
   // Anchored to the subscription's billing period, not the calendar month.
   const windowStart = quotaWindowStart(periodStart, new Date())
 
+  // A failed review produced nothing, so it must not consume the user's
+  // allowance — whether it failed normally or was reaped after its pipeline
+  // died. The hourly abuse cap in review/start remains the backstop against
+  // someone looping deliberately.
   const { count } = await admin
     .from('review_sessions')
     .select('*', { count: 'exact', head: true })
     .gte('created_at', windowStart.toISOString())
+    .neq('status', 'failed')
     .in('draft_id', draftIds)
 
   const used = count ?? 0
