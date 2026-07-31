@@ -238,14 +238,35 @@ enough).
 **Response:** `{ scanned, reaped: [{ sessionId, column, from }] }`, and one
 `console.warn` per reaped lifecycle so the sweep leaves a trace in the logs.
 
-### 4. Schedule — `vercel.json`
+### 4. Schedule — GitHub Actions, not Vercel Cron
 
-```json
-"crons": [{ "path": "/api/cron/reap-reviews", "schedule": "*/5 * * * *" }]
-```
+> **Corrected 2026-07-31, after implementation.** This section originally
+> specified `"crons": [...]` in `vercel.json`, on the belief that the Vercel
+> account was on Pro. It is on **Hobby**, which caps cron jobs at once per
+> **day** — and a sub-daily entry does not merely fail to schedule, it makes
+> **every deployment fail at creation**, leaving no failed-deployment record to
+> notice. Dropping to a daily sweep would also defeat the feature, since the
+> problem being solved is a user watching a spinner that never resolves.
 
-Plus `CRON_SECRET` in the Vercel environment (and `.env.local.example`, so a
-local checkout documents it).
+`.github/workflows/reap-stuck-reviews.yml` runs `*/5 * * * *` (plus
+`workflow_dispatch` for manual runs) and curls the endpoint with the bearer
+secret.
+
+This works precisely because the route authenticates on a **secret, not on
+caller identity** — any scheduler holding `CRON_SECRET` is equivalent. The
+design survived the platform constraint without a single code change.
+
+`CRON_SECRET` must therefore be set in **two** places, and match: the Vercel
+Production environment, and the repo's Actions secrets. If they drift, the
+workflow fails with a 401 every five minutes.
+
+GitHub's scheduled runs are best-effort and often 5–15 minutes late. That is
+acceptable here: lateness only delays cleanup of an already-dead session and
+cannot cause a live one to be reaped, because the route re-checks the threshold
+itself rather than trusting the caller's timing.
+
+Moving back to Vercel Cron later is deleting the workflow and restoring the
+`crons` entry.
 
 ### 5. Quota release — `lib/plan/gates.ts`
 

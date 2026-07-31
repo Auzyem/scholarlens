@@ -12,11 +12,5 @@
     "app/api/cron/reap-reviews/route.ts": {
       "maxDuration": 60
     }
-  },
-  "crons": [
-    {
-      "path": "/api/cron/reap-reviews",
-      "schedule": "*/5 * * * *"
-    }
-  ]
+  }
 }
