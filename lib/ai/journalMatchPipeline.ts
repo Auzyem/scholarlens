@@ -1,18 +1,26 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { mustWrite, isReported } from '@/lib/db/mustWrite'
+import { reportError, flushMonitoring } from '@/lib/monitoring/sentry'
 import { runJournalMatcher } from './prompts/journalMatcher'
 
 export async function runJournalMatchPipeline(sessionId: string) {
   const supabase = createAdminClient()
 
   try {
-    await supabase
-      .from('review_sessions')
-      .update({ journal_match_status: 'running' })
-      .eq('id', sessionId)
+    await mustWrite(
+      'claim journal match run',
+      supabase.from('review_sessions').update({ journal_match_status: 'running' }).eq('id', sessionId),
+      { sessionId },
+    )
 
     // Retries re-run this pass; rows are inserted, not upserted, so clear what a
-    // previous attempt wrote or the match list silently doubles.
-    await supabase.from('journal_matches').delete().eq('session_id', sessionId)
+    // previous attempt wrote or the match list silently doubles — which is why
+    // this delete failing must be loud rather than silent.
+    await mustWrite(
+      'clear prior journal matches',
+      supabase.from('journal_matches').delete().eq('session_id', sessionId),
+      { sessionId },
+    )
 
     const { data: session, error } = await supabase
       .from('review_sessions')
@@ -66,18 +74,28 @@ export async function runJournalMatchPipeline(sessionId: string) {
       rationale: j.rationale,
     }))
     if (rows.length > 0) {
-      await supabase.from('journal_matches').insert(rows)
+      await mustWrite('insert journal matches', supabase.from('journal_matches').insert(rows), {
+        sessionId,
+        rowCount: rows.length,
+      })
     }
 
-    await supabase
-      .from('review_sessions')
-      .update({ journal_match_status: 'complete' })
-      .eq('id', sessionId)
+    await mustWrite(
+      'complete journal match run',
+      supabase.from('review_sessions').update({ journal_match_status: 'complete' }).eq('id', sessionId),
+      { sessionId },
+    )
   } catch (err: unknown) {
+    if (!isReported(err)) reportError(err, { sessionId, stage: 'journal match' })
+    // Deliberately NOT wrapped: nowhere left to escalate if this also fails,
+    // and the reaper catches a session left in 'running'.
     await supabase
       .from('review_sessions')
       .update({ journal_match_status: 'failed' })
       .eq('id', sessionId)
     throw err
+  } finally {
+    // Detached under waitUntil — flush before the function can freeze.
+    await flushMonitoring()
   }
 }
