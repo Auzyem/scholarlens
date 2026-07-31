@@ -1,4 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { mustWrite, isReported } from '@/lib/db/mustWrite'
+import { reportError, flushMonitoring } from '@/lib/monitoring/sentry'
 import { runReportingChecker } from './prompts/reportingChecker'
 import { GUIDELINES, type ReportingGuidelineId } from '@/lib/reporting/guidelines'
 import type { ChecklistItemStatus } from '@/lib/types'
@@ -13,14 +15,20 @@ export async function runReportingCheckPipeline(sessionId: string) {
   const supabase = createAdminClient()
 
   try {
-    await supabase
-      .from('review_sessions')
-      .update({ reporting_check_status: 'running' })
-      .eq('id', sessionId)
+    await mustWrite(
+      'claim reporting check run',
+      supabase.from('review_sessions').update({ reporting_check_status: 'running' }).eq('id', sessionId),
+      { sessionId },
+    )
 
     // Retries re-run this pass; rows are inserted, not upserted, so clear what a
-    // previous attempt wrote or the checklist silently doubles.
-    await supabase.from('reporting_checklist_items').delete().eq('session_id', sessionId)
+    // previous attempt wrote or the checklist silently doubles — which is why
+    // this delete failing must be loud rather than silent.
+    await mustWrite(
+      'clear prior checklist items',
+      supabase.from('reporting_checklist_items').delete().eq('session_id', sessionId),
+      { sessionId },
+    )
 
     const { data: session, error } = await supabase
       .from('review_sessions')
@@ -59,23 +67,37 @@ export async function runReportingCheckPipeline(sessionId: string) {
       }
     })
     if (rows.length > 0) {
-      // supabase-js returns errors on the response rather than throwing, so an unchecked
-      // failure here (e.g. a schema-cache-stale PGRST205, RLS denial, or CHECK violation)
-      // would silently leave the session 'complete' with zero rows. Surface it to the catch.
-      const { error: insertError } = await supabase.from('reporting_checklist_items').insert(rows)
-      if (insertError) throw insertError
+      // supabase-js returns errors on the response rather than throwing, so an
+      // unchecked failure here (a stale schema cache, an RLS denial, a CHECK
+      // violation) would silently leave the session 'complete' with zero rows.
+      // This file guarded against that by hand; mustWrite now does it uniformly
+      // and reports the failure as well as surfacing it to the catch.
+      await mustWrite(
+        'insert checklist items',
+        supabase.from('reporting_checklist_items').insert(rows),
+        { sessionId, guidelineId: guideline.id, rowCount: rows.length },
+      )
     }
 
-    const { error: updateError } = await supabase
-      .from('review_sessions')
-      .update({ reporting_check_status: 'complete', reporting_summary: result.summary })
-      .eq('id', sessionId)
-    if (updateError) throw updateError
+    await mustWrite(
+      'complete reporting check run',
+      supabase
+        .from('review_sessions')
+        .update({ reporting_check_status: 'complete', reporting_summary: result.summary })
+        .eq('id', sessionId),
+      { sessionId },
+    )
   } catch (err: unknown) {
+    if (!isReported(err)) reportError(err, { sessionId, stage: 'reporting check' })
+    // Deliberately NOT wrapped: nowhere left to escalate if this also fails,
+    // and the reaper catches a session left in 'running'.
     await supabase
       .from('review_sessions')
       .update({ reporting_check_status: 'failed' })
       .eq('id', sessionId)
     throw err
+  } finally {
+    // Detached under waitUntil — flush before the function can freeze.
+    await flushMonitoring()
   }
 }

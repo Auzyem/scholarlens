@@ -1,4 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { mustWrite, isReported } from '@/lib/db/mustWrite'
+import { reportError, flushMonitoring } from '@/lib/monitoring/sentry'
 import { runAdversarialReviewer, buildPriorReviewContext } from './prompts/adversarialReviewer'
 import type { ReviewerPersona, Score } from '@/lib/types'
 
@@ -6,15 +8,21 @@ export async function runAdversarialPipeline(sessionId: string) {
   const supabase = createAdminClient()
 
   try {
-    await supabase
-      .from('review_sessions')
-      .update({ adversarial_status: 'running' })
-      .eq('id', sessionId)
+    await mustWrite(
+      'claim adversarial run',
+      supabase.from('review_sessions').update({ adversarial_status: 'running' }).eq('id', sessionId),
+      { sessionId },
+    )
 
     // This pass can legitimately run more than once (a retry after a failure or
     // after the reaper). Rows are written with a plain insert, so clear what a
-    // previous attempt wrote or the critique list silently doubles.
-    await supabase.from('adversarial_critiques').delete().eq('session_id', sessionId)
+    // previous attempt wrote or the critique list silently doubles — which is
+    // why this delete failing must be loud rather than silent.
+    await mustWrite(
+      'clear prior critiques',
+      supabase.from('adversarial_critiques').delete().eq('session_id', sessionId),
+      { sessionId },
+    )
 
     const { data: session, error } = await supabase
       .from('review_sessions')
@@ -53,18 +61,32 @@ export async function runAdversarialPipeline(sessionId: string) {
       section_reference: c.section_reference,
     }))
     if (critiqueRows.length > 0) {
-      await supabase.from('adversarial_critiques').insert(critiqueRows)
+      await mustWrite(
+        'insert critiques',
+        supabase.from('adversarial_critiques').insert(critiqueRows),
+        { sessionId, rowCount: critiqueRows.length },
+      )
     }
 
-    await supabase
-      .from('review_sessions')
-      .update({ adversarial_status: 'complete', adversarial_summary: result.summary })
-      .eq('id', sessionId)
+    await mustWrite(
+      'complete adversarial run',
+      supabase
+        .from('review_sessions')
+        .update({ adversarial_status: 'complete', adversarial_summary: result.summary })
+        .eq('id', sessionId),
+      { sessionId },
+    )
   } catch (err: unknown) {
+    if (!isReported(err)) reportError(err, { sessionId, stage: 'adversarial' })
+    // Deliberately NOT wrapped: nowhere left to escalate if this also fails,
+    // and the reaper catches a session left in 'running'.
     await supabase
       .from('review_sessions')
       .update({ adversarial_status: 'failed' })
       .eq('id', sessionId)
     throw err
+  } finally {
+    // Detached under waitUntil — flush before the function can freeze.
+    await flushMonitoring()
   }
 }

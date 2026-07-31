@@ -1,4 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { mustWrite, isReported } from '@/lib/db/mustWrite'
+import { reportError, reportWarning, flushMonitoring } from '@/lib/monitoring/sentry'
 import { runDisciplineRouter } from './prompts/disciplineRouter'
 import { runDeepReviewer } from './prompts/deepReviewer'
 import { runProgressComparator } from './prompts/progressComparator'
@@ -30,7 +32,11 @@ export async function runReviewPipeline(sessionId: string) {
   const supabase = createAdminClient()
 
   const updateStatus = async (status: ReviewStatus) => {
-    await supabase.from('review_sessions').update({ status }).eq('id', sessionId)
+    await mustWrite(
+      'update session status',
+      supabase.from('review_sessions').update({ status }).eq('id', sessionId),
+      { sessionId, status },
+    )
   }
 
   try {
@@ -50,16 +56,27 @@ export async function runReviewPipeline(sessionId: string) {
     await updateStatus('routing')
     const routing = await runDisciplineRouter(title, abstract)
 
-    await supabase.from('manuscripts').update({
-      field: routing.field,
-      subfield: routing.subfield,
-      doc_type: routing.doc_type,
-    }).eq('id', manuscript.id)
+    await mustWrite(
+      'persist routing metadata',
+      supabase.from('manuscripts').update({
+        field: routing.field,
+        subfield: routing.subfield,
+        doc_type: routing.doc_type,
+      }).eq('id', manuscript.id),
+      { sessionId, manuscriptId: manuscript.id },
+    )
 
-    await supabase.from('review_sessions').update({
-      reviewer_persona: routing.persona,
-      routing_confidence: routing.confidence,
-    }).eq('id', sessionId)
+    // The write that silently failed for weeks: routing_confidence did not
+    // exist, so the whole update was rejected, reviewer_persona was never
+    // saved, and every review fell back to the default persona.
+    await mustWrite(
+      'persist reviewer persona',
+      supabase.from('review_sessions').update({
+        reviewer_persona: routing.persona,
+        routing_confidence: routing.confidence,
+      }).eq('id', sessionId),
+      { sessionId, persona: routing.persona },
+    )
 
     if (routing.confidence < CONFIDENCE_THRESHOLD) {
       // Pause for human confirmation; the confirm route resumes via runDeepReviewStage.
@@ -70,11 +87,21 @@ export async function runReviewPipeline(sessionId: string) {
     await runDeepReviewStage(sessionId)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
+    // mustWrite already reported its own failures; don't send a duplicate.
+    if (!isReported(err)) reportError(err, { sessionId, stage: 'routing' })
+    // Deliberately NOT wrapped in mustWrite: if the failure-write itself fails
+    // there is nowhere left to escalate, and throwing from a catch would mask
+    // the original error. The session then stays in a running state and the
+    // stuck-review reaper picks it up within 10 minutes.
     await supabase.from('review_sessions').update({
       status: 'failed',
       error_message: message,
     }).eq('id', sessionId)
     throw err
+  } finally {
+    // This pipeline runs detached under waitUntil; Vercel can freeze the
+    // function the moment it settles, discarding buffered events.
+    await flushMonitoring()
   }
 }
 
@@ -87,7 +114,11 @@ export async function runDeepReviewStage(sessionId: string) {
   const supabase = createAdminClient()
 
   try {
-    await supabase.from('review_sessions').update({ status: 'reviewing' }).eq('id', sessionId)
+    await mustWrite(
+      'mark session reviewing',
+      supabase.from('review_sessions').update({ status: 'reviewing' }).eq('id', sessionId),
+      { sessionId },
+    )
 
     const { data: session, error } = await supabase
       .from('review_sessions')
@@ -118,7 +149,10 @@ export async function runDeepReviewStage(sessionId: string) {
       rationale: s.rationale,
       improvements: s.improvements,
     }))
-    await supabase.from('scores').insert(scoreRows)
+    await mustWrite('insert scores', supabase.from('scores').insert(scoreRows), {
+      sessionId,
+      rowCount: scoreRows.length,
+    })
 
     const annotationRows = review.annotations.map(a => ({
       session_id: sessionId,
@@ -128,31 +162,47 @@ export async function runDeepReviewStage(sessionId: string) {
       suggestion: a.suggestion,
     }))
     if (annotationRows.length > 0) {
-      await supabase.from('annotations').insert(annotationRows)
+      await mustWrite('insert annotations', supabase.from('annotations').insert(annotationRows), {
+        sessionId,
+        rowCount: annotationRows.length,
+      })
     }
 
-    await supabase.from('review_sessions').update({
-      overall_score: review.overall_score,
-      verdict: review.verdict,
-      strength_summary: review.strength_summary,
-      weakness_summary: review.weakness_summary,
-      status: 'complete',
-      completed_at: new Date().toISOString(),
-    }).eq('id', sessionId)
+    await mustWrite(
+      'persist review result',
+      supabase.from('review_sessions').update({
+        overall_score: review.overall_score,
+        verdict: review.verdict,
+        strength_summary: review.strength_summary,
+        weakness_summary: review.weakness_summary,
+        status: 'complete',
+        completed_at: new Date().toISOString(),
+      }).eq('id', sessionId),
+      { sessionId },
+    )
 
-    // Best-effort draft-to-draft comparison; never fails the (already saved) review.
+    // Best-effort draft-to-draft comparison; never fails the (already saved)
+    // review, so this reports as a warning rather than throwing.
     try {
       await runProgressComparison(sessionId, manuscript.id, draft.version_number)
     } catch (e) {
-      console.error('[progress comparison] failed:', e)
+      reportWarning('progress comparison failed', {
+        sessionId,
+        manuscriptId: manuscript.id,
+        reason: e instanceof Error ? e.message : String(e),
+      })
     }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error'
+    if (!isReported(err)) reportError(err, { sessionId, stage: 'deep review' })
+    // Deliberately NOT wrapped — see the note in runReviewPipeline's catch.
     await supabase.from('review_sessions').update({
       status: 'failed',
       error_message: message,
     }).eq('id', sessionId)
     throw err
+  } finally {
+    await flushMonitoring()
   }
 }
 
