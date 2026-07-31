@@ -1,0 +1,92 @@
+name: Reap stuck reviews
+
+# Sweeps for review sessions whose pipeline died without writing a terminal
+# status, fails them, and releases the user's quota. See
+# docs/superpowers/specs/2026-07-31-stuck-review-reaper-design.md.
+#
+# WHY THIS IS NOT A VERCEL CRON
+# The natural home for this is `crons` in vercel.json, but the Vercel account is
+# on the Hobby plan, which caps cron jobs at once per DAY. A sub-daily entry
+# there does not merely fail to schedule — it makes EVERY deployment fail at
+# creation ("Hobby accounts are limited to daily cron jobs"), with no failed
+# deployment record to notice. A daily sweep would also defeat the point: the
+# problem being solved is a user watching a spinner that never resolves.
+#
+# The endpoint authenticates on a bearer secret rather than on caller identity,
+# so any scheduler holding CRON_SECRET works. Moving back to vercel.json later
+# is just deleting this file and restoring the `crons` entry.
+#
+# SETUP
+#   1. Repo → Settings → Secrets and variables → Actions → New repository secret
+#      Name: CRON_SECRET   Value: the same value set in the Vercel project.
+#   2. Optional: set an APP_BASE_URL *variable* (not secret) to override the
+#      default production origin below.
+#
+# CAVEATS
+#   - GitHub's scheduled runs are best-effort and commonly 5-15 minutes late.
+#     That is acceptable here: being late only delays cleanup of an already-dead
+#     session, it cannot cause a live one to be reaped (the route re-checks the
+#     10-minute threshold itself).
+#   - GitHub disables scheduled workflows after 60 days with no repo activity.
+#   - Schedules only run from the default branch.
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  # Lets you trigger a sweep by hand from the Actions tab — used by the
+  # verification pass, and for confirming setup without waiting 5 minutes.
+  workflow_dispatch:
+
+# Never let two sweeps overlap. The route's updates are individually safe, but
+# concurrent sweeps just duplicate work.
+concurrency:
+  group: reap-stuck-reviews
+  cancel-in-progress: false
+
+jobs:
+  reap:
+    name: sweep
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Call the sweep endpoint
+        env:
+          BASE_URL: ${{ vars.APP_BASE_URL || 'https://www.scholarlens.ac' }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${CRON_SECRET}" ]; then
+            echo "::error::CRON_SECRET repository secret is not set — the sweep cannot authenticate."
+            echo "Add it under Settings → Secrets and variables → Actions, matching the value in Vercel."
+            exit 1
+          fi
+
+          response=$(curl -sS -w $'\n%{http_code}' --max-time 120 \
+            -H "Authorization: Bearer ${CRON_SECRET}" \
+            "${BASE_URL}/api/cron/reap-reviews")
+
+          status=$(printf '%s' "${response}" | tail -n 1)
+          body=$(printf '%s' "${response}" | sed '$d')
+
+          echo "HTTP ${status}"
+          echo "${body}"
+
+          if [ "${status}" = "401" ]; then
+            echo "::error::401 from the sweep. The CRON_SECRET here does not match the one in Vercel, or it is unset in the Production environment."
+            exit 1
+          fi
+
+          if [ "${status}" != "200" ]; then
+            echo "::error::Sweep failed with HTTP ${status}."
+            exit 1
+          fi
+
+          # Surface reaps as a warning so they show up in the Actions summary —
+          # a session dying is worth noticing, not just cleaning up silently.
+          if printf '%s' "${body}" | grep -q '"reaped":\[\]'; then
+            echo "No stuck sessions."
+          else
+            echo "::warning::Stuck sessions were reaped — see the response body above."
+          fi
