@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import * as Sentry from '@sentry/nextjs'
 import { requirePermission, permissionErrorResponse } from '@/lib/admin/permissions'
-import { flushMonitoring } from '@/lib/monitoring/sentry'
 
 /**
  * TEMPORARY smoke test for the error-monitoring wiring. DELETE AFTER USE.
@@ -74,10 +73,15 @@ export async function GET() {
     })
   }
 
-  await flushMonitoring(5000)
+  // Call Sentry.flush directly rather than flushMonitoring: the wrapper
+  // deliberately swallows its result, and here the result IS the evidence.
+  // `true` means the transport drained — i.e. the event was accepted, not just
+  // queued locally.
+  const delivered = await Sentry.flush(8000)
 
   return NextResponse.json({
     ok: true,
+    delivered,
     eventId,
     whatToCheck: {
       findIt: `Sentry → Issues → search: ${eventId}`,
