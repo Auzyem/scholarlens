@@ -52,8 +52,9 @@ function calendarMonthStart(now: Date): Date {
  *   begins at `accountCreatedAt` and never moves, so every event ever recorded
  *   counts and the allowance never renews. Omitted entirely by callers that
  *   predate migration 020, which keeps the original two-argument behaviour.
- * @returns the instant the caller's current quota window began. Falls back to
- *   the calendar month when there is no usable anchor.
+ * @returns the instant the caller's current quota window began. A resetting
+ *   plan with no usable anchor falls back to the calendar month; a
+ *   non-resetting one falls back to the epoch, never to a renewing window.
  */
 export function quotaWindowStart(
   periodStartIso: string | null | undefined,
@@ -65,7 +66,13 @@ export function quotaWindowStart(
   if (opts?.resets === false) {
     const created = opts.accountCreatedAt ? new Date(opts.accountCreatedAt) : null
     if (created && !Number.isNaN(created.getTime())) return created
-    return calendarMonthStart(now)
+    // No usable creation date — the profile read failed, or the row never got
+    // written. Guessing "calendar month" would quietly restore monthly renewal
+    // to a plan sold as a one-time allowance, handing out free reviews every
+    // month on the back of an infrastructure blip. The epoch guesses the other
+    // way: every event the account has ever recorded counts, so at worst a user
+    // is over-counted and contacts support. Fail towards the reversible error.
+    return new Date(0)
   }
 
   if (!periodStartIso) return calendarMonthStart(now)

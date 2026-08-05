@@ -34,7 +34,11 @@ async function isSuperAdmin(userId: string): Promise<boolean> {
  * A slot is charged when a manuscript's first review *completes*, so uploading
  * the wrong file and deleting it costs nothing. Once charged, deleting the
  * manuscript never refunds — the charge lives in the ledger, which no cascade
- * reaches. The second term keeps storage bounded without charging for it.
+ * reaches. The second term stops uploads being free to hoard *within the
+ * current window*; it does not bound total storage, and is not meant to. A
+ * manuscript charged in an earlier window keeps costing nothing forever, so
+ * live storage grows without limit — the alternative is re-charging users every
+ * window for a manuscript they already paid for, which would be worse.
  */
 export async function checkManuscriptLimit(
   userId: string

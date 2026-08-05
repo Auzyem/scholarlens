@@ -110,28 +110,52 @@ describe('quotaWindowStart', () => {
     ).toBe(created)
   })
 
-  it('falls back to the calendar month when non-resetting but the creation date is unusable', () => {
+  it('falls back to the epoch, never the calendar month, when non-resetting but the creation date is unusable', () => {
+    // A calendar-month fallback here would silently restore monthly renewal to
+    // the one-time Free allowance — 2 free reviews every month, caused by
+    // nothing more than a bad creation date. The epoch counts every event the
+    // account ever recorded, which over-counts at worst and is recoverable by
+    // support. Fail towards the reversible error.
+    //
     // periodStartIso must be non-null here: passing null would let the
     // pre-existing `if (!periodStartIso) return calendarMonthStart(now)` guard
-    // produce this exact answer regardless of whether the resets===false
-    // branch exists or works at all, making the assertion vacuous. A real
-    // anchor forces execution through the non-resetting branch, so this only
-    // passes if that branch itself falls back on an unparseable creation date.
+    // run instead, making the assertion vacuous. A real anchor forces execution
+    // through the non-resetting branch.
     expect(
       quotaWindowStart('2026-07-28T09:15:00.000Z', at('2026-07-30T12:00:00Z'), {
         resets: false,
         accountCreatedAt: 'not-a-date',
       }).toISOString()
-    ).toBe('2026-07-01T00:00:00.000Z')
+    ).toBe('1970-01-01T00:00:00.000Z')
   })
 
-  it('falls back to the calendar month when non-resetting and accountCreatedAt is null, even with a billing anchor present', () => {
+  it('falls back to the epoch when non-resetting and accountCreatedAt is null, even with a billing anchor present', () => {
+    // The missing-profile case: the handle_new_user trigger failed at signup,
+    // or the profiles read errored transiently.
     expect(
       quotaWindowStart('2026-07-28T09:15:00.000Z', at('2026-07-30T12:00:00Z'), {
         resets: false,
         accountCreatedAt: null,
       }).toISOString()
-    ).toBe('2026-07-01T00:00:00.000Z')
+    ).toBe('1970-01-01T00:00:00.000Z')
+  })
+
+  it('is unaffected by the epoch fallback when non-resetting with a valid creation date', () => {
+    // The safe fallback must not leak into the healthy path: a real creation
+    // date still anchors the lifetime window exactly where it did before.
+    const created = '2025-11-03T08:30:00.000Z'
+    expect(
+      quotaWindowStart('2026-07-28T09:15:00.000Z', at('2026-07-30T12:00:00Z'), {
+        resets: false,
+        accountCreatedAt: created,
+      }).toISOString()
+    ).toBe(created)
+    expect(
+      quotaWindowStart(null, at('2026-07-30T12:00:00Z'), {
+        resets: false,
+        accountCreatedAt: created,
+      }).toISOString()
+    ).toBe(created)
   })
 
   it('behaves exactly as before when resets is true', () => {

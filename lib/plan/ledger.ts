@@ -37,14 +37,22 @@ export interface QuotaContext {
 export async function resolveQuotaContext(userId: string, now = new Date()): Promise<QuotaContext> {
   const admin = createAdminClient()
 
-  const [{ data: sub }, { data: profile }] = await Promise.all([
-    admin
-      .from('subscriptions')
-      .select('plan_id, current_period_start, plans(*)')
-      .eq('user_id', userId)
-      .maybeSingle(),
-    admin.from('profiles').select('created_at').eq('id', userId).maybeSingle(),
-  ])
+  const [{ data: sub, error: subError }, { data: profile, error: profileError }] =
+    await Promise.all([
+      admin
+        .from('subscriptions')
+        .select('plan_id, current_period_start, plans(*)')
+        .eq('user_id', userId)
+        .maybeSingle(),
+      admin.from('profiles').select('created_at').eq('id', userId).maybeSingle(),
+    ])
+
+  // Either failure degrades the window silently — an unreadable subscription
+  // looks like the free plan, an unreadable profile looks like an account with
+  // no creation date. Both now fail safe below, but a quota resolved from a
+  // failed read is still wrong for the user in front of it, so it must be seen.
+  if (subError) reportError(subError, { userId, stage: 'quota context: subscriptions' })
+  if (profileError) reportError(profileError, { userId, stage: 'quota context: profiles' })
 
   const plan = (sub?.plans as unknown as Record<string, unknown> | null) ?? null
 

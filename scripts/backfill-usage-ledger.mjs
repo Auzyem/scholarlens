@@ -14,8 +14,14 @@
  *
  * Idempotent: existing usage_events rows are read first and anything already
  * recorded (by review_session_id for reviews, by manuscript_id for slots) is
- * skipped, and inserts also carry Prefer: resolution=ignore-duplicates. Re-running
- * inserts nothing new.
+ * skipped. Re-running inserts nothing new.
+ *
+ * That guarantee rests entirely on the pre-read being COMPLETE, which is why
+ * both reads page (see restAll) and assert their row count against the server's
+ * own. Prefer: resolution=ignore-duplicates is not a second line of defence:
+ * there is no unique constraint on review_session_id (migration 019 indexes it
+ * non-uniquely), so a duplicate review row is a perfectly legal insert and
+ * Postgres has no conflict to ignore. A truncated pre-read would double-charge.
  *
  * Dry run by default — reports counts only. Pass --apply to write.
  *
@@ -50,6 +56,9 @@ if (!url || !key) {
 console.log(`project: ${url}`)
 console.log(APPLY ? 'mode: APPLY — usage_events will be written' : 'mode: DRY RUN — nothing will be written (pass --apply to write)')
 
+/** Rows requested per page. PostgREST clamps this down to its own max-rows. */
+const PAGE = 1000
+
 async function rest(path, init = {}) {
   const res = await fetch(`${url}/rest/v1/${path}`, {
     ...init,
@@ -64,6 +73,76 @@ async function rest(path, init = {}) {
   return res.status === 204 ? null : res.json()
 }
 
+/**
+ * Read every row of `path`, one Range page at a time.
+ *
+ * An unpaged read is silently truncated at PostgREST's max-rows — no error, no
+ * flag, just a short array. That breaks this script in both directions: a
+ * truncated session read under-charges users, and a truncated read of the
+ * *existing* ledger breaks the idempotency guard, because `Prefer:
+ * resolution=ignore-duplicates` has nothing to ignore (migration 019 indexes
+ * review_session_id non-uniquely, so a duplicate insert is a legal insert).
+ *
+ * Pages by Range header rather than offset/limit params so it works unchanged
+ * on paths that already carry a query string. The page size we ask for is only
+ * an upper bound — the server may hand back fewer — so the loop advances by
+ * what actually arrived and stops on an empty page, which is also what makes a
+ * total that is an exact multiple of the page size terminate correctly.
+ *
+ * Prefer: count=exact makes the server report the true total in Content-Range;
+ * anything short of it means we were still truncated, and that must be loud.
+ */
+async function restAll(path, label) {
+  const rows = []
+  let total = null
+  let pages = 0
+
+  for (;;) {
+    const from = rows.length
+    const res = await fetch(`${url}/rest/v1/${path}`, {
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'Range-Unit': 'items',
+        Range: `${from}-${from + PAGE - 1}`,
+        Prefer: 'count=exact',
+      },
+    })
+
+    // Some PostgREST versions answer a past-the-end range with 416 instead of
+    // an empty array. Both mean the same thing here: nothing left to read.
+    if (res.status === 416) break
+    if (!res.ok) throw new Error(`${path} -> ${res.status} ${await res.text()}`)
+
+    const reported = (res.headers.get('content-range') ?? '').split('/')[1]
+    if (reported && reported !== '*') total = Number(reported)
+
+    const batch = await res.json()
+    pages++
+    rows.push(...batch)
+
+    if (batch.length === 0) break
+    if (total !== null && rows.length >= total) break
+  }
+
+  console.log(
+    `${label}: ${rows.length} rows read in ${pages} page(s)` +
+      (total === null ? ' (server reported no count)' : ` (server count: ${total})`)
+  )
+
+  // The whole point of paging: if the accumulated total still disagrees with
+  // the server's own count, we are working from a partial picture and every
+  // number below is wrong. Stop rather than write from it.
+  if (total !== null && rows.length !== total) {
+    throw new Error(
+      `${label}: read ${rows.length} rows but the server counts ${total} — refusing to continue on a partial read`
+    )
+  }
+
+  return rows
+}
+
 async function main() {
   // Every completed session, with its owning manuscript reached through the
   // to-one embeds review_sessions -> drafts -> manuscripts (matches the nested
@@ -71,12 +150,20 @@ async function main() {
   // `.select('*, drafts(*, manuscripts(*))')`). Sessions whose manuscript was
   // already deleted simply have drafts.manuscripts come back null — that's the
   // amnesty case, not an error.
-  const sessions = await rest(
-    'review_sessions?status=eq.complete&select=id,created_at,completed_at,drafts(manuscript_id,manuscripts(id,user_id))'
+  //
+  // Both reads are paged, and both carry an explicit `order=id`: page N+1 is
+  // requested by row offset, so without a total order the server is free to
+  // return rows in a different order each page, which would drop and repeat
+  // rows across the seam.
+  const sessions = await restAll(
+    'review_sessions?status=eq.complete&order=id&select=id,created_at,completed_at,drafts(manuscript_id,manuscripts(id,user_id))',
+    'completed sessions'
   )
-  console.log(`completed sessions found: ${sessions.length}`)
 
-  const existing = await rest('usage_events?select=review_session_id,manuscript_id,kind')
+  const existing = await restAll(
+    'usage_events?order=id&select=review_session_id,manuscript_id,kind',
+    'existing usage_events'
+  )
   const seenSessions = new Set(existing.filter((e) => e.review_session_id).map((e) => e.review_session_id))
   const seenSlots = new Set(
     existing.filter((e) => e.kind === 'manuscript_slot' && e.manuscript_id).map((e) => e.manuscript_id)

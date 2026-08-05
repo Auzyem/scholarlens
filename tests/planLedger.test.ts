@@ -135,6 +135,45 @@ describe('resolveQuotaContext', () => {
     expect(ctx.planId).toBe('free')
     expect(ctx.plan).toBeNull()
   })
+
+  it('does not restore a monthly window when the profile is unreadable on a non-resetting plan', async () => {
+    // The profiles read failed, or handle_new_user never wrote the row. A
+    // calendar-month window here would hand the one-time Free allowance a fresh
+    // 2 reviews every month — the exact bug the plan flag exists to prevent.
+    h.admin = mockAdmin({
+      subscriptions: {
+        data: {
+          plan_id: 'free',
+          current_period_start: '2026-07-28T09:15:00.000Z',
+          plans: { quota_resets: false, max_reviews_per_month: 2 },
+        },
+      },
+      profiles: { data: null, error: { message: 'timeout' } },
+    })
+
+    const ctx = await resolveQuotaContext('u1', new Date('2026-07-30T12:00:00Z'))
+
+    expect(ctx.windowStart.toISOString()).toBe('1970-01-01T00:00:00.000Z')
+    expect(m.errors).toHaveLength(1)
+    expect(m.errors[0].ctx).toMatchObject({ userId: 'u1' })
+  })
+
+  it('reports an unreadable subscription instead of silently resolving as free', async () => {
+    // A failed subscriptions read is indistinguishable from having no
+    // subscription: the caller gets the free plan's limits either way. The
+    // quota still resolves — no throw — but a paying user being metered as free
+    // must not be invisible.
+    h.admin = mockAdmin({
+      subscriptions: { data: null, error: { message: 'reset' } },
+      profiles: { data: { created_at: '2025-11-03T08:30:00.000Z' } },
+    })
+
+    const ctx = await resolveQuotaContext('u1', new Date('2026-07-30T12:00:00Z'))
+
+    expect(ctx.planId).toBe('free')
+    expect(m.errors).toHaveLength(1)
+    expect(m.errors[0].ctx).toMatchObject({ userId: 'u1' })
+  })
 })
 
 describe('countUsage', () => {
