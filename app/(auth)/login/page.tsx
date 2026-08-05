@@ -21,7 +21,19 @@ export default function LoginPage() {
     const supabase = createClient()
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
-    if (error) { setError(error.message); return }
+    if (error) {
+      // "Invalid login credentials" is also what Supabase returns when the
+      // account has no password at all — the case for anyone who signed up
+      // with Google. Naming both recovery routes turns a dead end into a fix.
+      setError(
+        error.message === 'Invalid login credentials'
+          ? 'We couldn’t sign you in. If you signed up with Google, use "Continue with Google" below — or reset your password to set one.'
+          : error.message === 'Email not confirmed'
+            ? 'Please confirm your email first — check your inbox for the link we sent.'
+            : error.message
+      )
+      return
+    }
     // replace (not push) so the login page is not left in history, and refresh
     // so the middleware re-reads the freshly-set session cookie.
     router.replace('/dashboard')
@@ -42,6 +54,11 @@ export default function LoginPage() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? 'Logging in…' : 'Log in'}
           </Button>
+          <div className="text-right">
+            <Link href="/forgot-password" className="text-xs text-muted-foreground underline hover:text-foreground">
+              Forgot password?
+            </Link>
+          </div>
         </form>
         <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
           <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
