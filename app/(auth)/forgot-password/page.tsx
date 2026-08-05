@@ -7,10 +7,25 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Logo } from '@/components/layout/Logo'
 
+/**
+ * Isolated so that `useSearchParams` opts ONLY this notice out of server
+ * rendering. Inside the form component it put the whole page in the Suspense
+ * boundary, and with `fallback={null}` that shipped an empty card until
+ * JavaScript hydrated.
+ *
+ * /auth/callback and /auth/confirm send us here with ?expired=1 when a recovery
+ * link fails to redeem — it has expired or was already used.
+ */
+function ExpiredLinkNotice() {
+  if (useSearchParams().get('expired') !== '1') return null
+  return (
+    <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      That reset link has expired or was already used. Request a new one below.
+    </p>
+  )
+}
+
 function ForgotPasswordForm() {
-  // /auth/callback sends us here with ?expired=1 when a recovery link fails to
-  // exchange — i.e. it has expired or was already used.
-  const expired = useSearchParams().get('expired') === '1'
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -49,11 +64,9 @@ function ForgotPasswordForm() {
           </div>
         ) : (
           <>
-            {expired && (
-              <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                That reset link has expired or was already used. Request a new one below.
-              </p>
-            )}
+            <Suspense fallback={null}>
+              <ExpiredLinkNotice />
+            </Suspense>
             <p className="mb-4 text-sm text-muted-foreground">
               Enter your email and we&apos;ll send you a link to set a new password. This also works
               if you originally signed up with Google and have never had a password.
@@ -76,12 +89,9 @@ function ForgotPasswordForm() {
   )
 }
 
-// useSearchParams opts the subtree into client-side rendering; without a
-// Suspense boundary the production build fails to prerender this route.
+// The Suspense boundary lives around ExpiredLinkNotice rather than out here, so
+// the form itself still server-renders. Wrapping the whole page satisfies the
+// build the same way, but ships a blank card.
 export default function ForgotPasswordPage() {
-  return (
-    <Suspense fallback={null}>
-      <ForgotPasswordForm />
-    </Suspense>
-  )
+  return <ForgotPasswordForm />
 }
