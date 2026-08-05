@@ -7,6 +7,8 @@ interface Usage {
   plan: string
   manuscripts: { used: number; limit: number | null }
   reviewsThisMonth: { used: number; limit: number | null }
+  resets: boolean
+  exhausted: boolean
 }
 
 function Bar({ label, used, limit }: { label: string; used: number; limit: number | null }) {
@@ -47,13 +49,32 @@ export function UsageCard() {
 
   if (!usage) return null
 
+  const oneTimeExhausted = usage.exhausted && !usage.resets
+
   return (
     <Card className="mb-6 p-5">
-      <div className="mb-3 text-sm font-medium">Usage this month</div>
+      <div className="mb-3 text-sm font-medium">
+        {usage.resets ? 'Usage this month' : 'Usage'}
+      </div>
       <div className="space-y-4">
         <Bar label="Manuscripts" used={usage.manuscripts.used} limit={usage.manuscripts.limit} />
         <Bar label="Reviews" used={usage.reviewsThisMonth.used} limit={usage.reviewsThisMonth.limit} />
       </div>
+      {oneTimeExhausted && (
+        <div className="mt-4 rounded-md border border-pr-teal/30 bg-pr-teal/5 p-3">
+          <p className="text-sm font-medium text-pr-navy">You&apos;ve used your free reviews</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            The free allowance is one-time and doesn&apos;t renew. Your account stays active and
+            all your existing reviews remain available.
+          </p>
+          <Link
+            href="/billing"
+            className="mt-2 inline-block text-xs font-medium text-pr-teal hover:underline"
+          >
+            Upgrade to continue →
+          </Link>
+        </div>
+      )}
     </Card>
   )
 }
