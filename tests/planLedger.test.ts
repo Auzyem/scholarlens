@@ -134,6 +134,11 @@ describe('resolveQuotaContext', () => {
     const ctx = await resolveQuotaContext('u1', new Date('2026-07-30T12:00:00Z'))
     expect(ctx.planId).toBe('free')
     expect(ctx.plan).toBeNull()
+    // And it must inherit free's one-time semantics, not a monthly window.
+    // planId falls back to 'free' here, so anything that renews would
+    // contradict it and grant a fresh allowance every month — no error needed,
+    // a missing subscriptions row is enough to reach this.
+    expect(ctx.windowStart.toISOString()).toBe('2025-11-03T08:30:00.000Z')
   })
 
   it('does not restore a monthly window when the profile is unreadable on a non-resetting plan', async () => {

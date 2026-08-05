@@ -56,8 +56,12 @@ export async function resolveQuotaContext(userId: string, now = new Date()): Pro
 
   const plan = (sub?.plans as unknown as Record<string, unknown> | null) ?? null
 
-  // Absent flag means a plans row predating migration 020 — those all reset.
-  const resets = plan ? plan.quota_resets !== false : true
+  // Absent flag on a real plans row means a row predating migration 020 — those
+  // all reset. No plans row at all is different: `planId` below falls back to
+  // 'free', and free does NOT reset, so defaulting `resets` to true here would
+  // contradict it and hand an unidentified user a fresh allowance every month.
+  // That is reachable without any error — a missing subscriptions row is enough.
+  const resets = plan ? plan.quota_resets !== false : false
 
   return {
     planId: (sub?.plan_id as string | undefined) ?? 'free',
