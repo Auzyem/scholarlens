@@ -12,6 +12,10 @@
  * long, so metering against it would hand them twelve months of reviews on day
  * one. Their quota rolls on the same day-of-month they signed up.
  *
+ * A one-time plan (Free) is a third mode: it never renews, so its window opens
+ * at account creation and stays there forever — every event ever recorded
+ * counts against it. Callers signal this by passing `opts.resets: false`.
+ *
  * All arithmetic is UTC so the result doesn't shift with the server's timezone.
  */
 
@@ -43,11 +47,27 @@ function calendarMonthStart(now: Date): Date {
 /**
  * @param periodStartIso `subscriptions.current_period_start`, or null/absent for
  *   free-plan rows and rows not yet re-synced since migration 017.
+ * @param now the instant to evaluate against.
+ * @param opts `resets: false` marks a one-time plan (the Free tier). Its window
+ *   begins at `accountCreatedAt` and never moves, so every event ever recorded
+ *   counts and the allowance never renews. Omitted entirely by callers that
+ *   predate migration 020, which keeps the original two-argument behaviour.
  * @returns the instant the caller's current quota window began. Falls back to
- *   the calendar month when there is no billing anchor — the free plan has no
- *   Stripe period, and that is the behaviour every plan had before this.
+ *   the calendar month when there is no usable anchor.
  */
-export function quotaWindowStart(periodStartIso: string | null | undefined, now: Date): Date {
+export function quotaWindowStart(
+  periodStartIso: string | null | undefined,
+  now: Date,
+  opts?: { resets?: boolean; accountCreatedAt?: string | null },
+): Date {
+  // A non-resetting plan ignores the billing anchor completely — a downgraded
+  // account can still carry current_period_start from when it was paying.
+  if (opts?.resets === false) {
+    const created = opts.accountCreatedAt ? new Date(opts.accountCreatedAt) : null
+    if (created && !Number.isNaN(created.getTime())) return created
+    return calendarMonthStart(now)
+  }
+
   if (!periodStartIso) return calendarMonthStart(now)
 
   const anchor = new Date(periodStartIso)

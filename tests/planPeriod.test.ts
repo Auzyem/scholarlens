@@ -85,4 +85,47 @@ describe('quotaWindowStart', () => {
     const offset = quotaWindowStart('2026-07-28T11:15:00.000+02:00', at('2026-08-30T00:00:00Z'))
     expect(offset.toISOString()).toBe(utc.toISOString())
   })
+
+  it('spans the whole account lifetime when the plan does not reset', () => {
+    // Free is a one-time allowance: the window starts the day the account was
+    // created, so every event ever recorded still counts.
+    const created = '2025-11-03T08:30:00.000Z'
+    expect(
+      quotaWindowStart(null, at('2026-07-30T12:00:00Z'), {
+        resets: false,
+        accountCreatedAt: created,
+      }).toISOString()
+    ).toBe(created)
+  })
+
+  it('ignores a billing anchor entirely when the plan does not reset', () => {
+    // A downgraded account can still carry current_period_start from its paid
+    // days; a non-resetting plan must not honour it.
+    const created = '2025-11-03T08:30:00.000Z'
+    expect(
+      quotaWindowStart('2026-07-28T09:15:00.000Z', at('2026-07-30T12:00:00Z'), {
+        resets: false,
+        accountCreatedAt: created,
+      }).toISOString()
+    ).toBe(created)
+  })
+
+  it('falls back to the calendar month when non-resetting but the creation date is unusable', () => {
+    expect(
+      quotaWindowStart(null, at('2026-07-30T12:00:00Z'), {
+        resets: false,
+        accountCreatedAt: null,
+      }).toISOString()
+    ).toBe('2026-07-01T00:00:00.000Z')
+  })
+
+  it('behaves exactly as before when resets is true', () => {
+    const anchor = '2026-07-28T09:15:00.000Z'
+    expect(
+      quotaWindowStart(anchor, at('2026-07-30T12:00:00Z'), {
+        resets: true,
+        accountCreatedAt: '2025-01-01T00:00:00.000Z',
+      }).toISOString()
+    ).toBe(anchor)
+  })
 })
