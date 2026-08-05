@@ -36,13 +36,39 @@ export async function POST(request: NextRequest) {
     .single()
 
   if (error || !session) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (session.status !== 'awaiting_confirmation') {
-    return NextResponse.json({ error: 'Session is not awaiting confirmation' }, { status: 409 })
+
+  // Atomically claim the confirmation: 'awaiting_confirmation' -> 'reviewing' in
+  // one conditional update. A read-then-act status check would not hold here —
+  // the status only leaves 'awaiting_confirmation' inside runDeepReviewStage,
+  // which is launched detached after this response returns, so two concurrent
+  // requests (double-click, multi-tab) would both pass the check and both
+  // reserve a credit, charging one review twice. Letting the database decide the
+  // winner means the loser matches zero rows and gets a 409 having reserved
+  // nothing. 'reviewing' is the right target because runDeepReviewStage sets
+  // exactly that as its first action, so its own write is a harmless re-write.
+  const { data: claimed, error: claimError } = await supabase
+    .from('review_sessions')
+    .update({ status: 'reviewing' })
+    .eq('id', sessionId)
+    .eq('status', 'awaiting_confirmation')
+    .select('id')
+
+  if (claimError) return NextResponse.json({ error: claimError.message }, { status: 500 })
+  if (!claimed || claimed.length === 0) {
+    return NextResponse.json({ error: 'This review has already been confirmed' }, { status: 409 })
   }
 
   // The credit was handed back when the pipeline parked here, so resuming needs
   // an available slot again — the user may have spent their allowance elsewhere
   // while this sat waiting.
+  //
+  // Claiming before reserving is deliberate: the loser of the race never gets
+  // this far, so there is no reservation to roll back. The cost is that a quota
+  // rejection below leaves the session at 'reviewing' with no work running — but
+  // 'reviewing' is in REAPABLE_MAIN_STATUSES, so the stuck-review reaper fails it
+  // properly within 10 minutes. That is not a leak. The reverse order would be
+  // worse: it can write a reservation for a session that stays parked forever,
+  // because 'awaiting_confirmation' is deliberately never reaped.
   const planLimit = await checkReviewLimit(user.id)
   if (!planLimit.allowed) {
     const planName = planLimit.plan[0].toUpperCase() + planLimit.plan.slice(1)
