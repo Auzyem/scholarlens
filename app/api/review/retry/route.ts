@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runReviewPipeline } from '@/lib/ai/pipeline'
 import { checkReviewLimit } from '@/lib/plan/gates'
-import { insertReservation } from '@/lib/plan/ledger'
+import { reserveReviewCredit } from '@/lib/plan/ledger'
 
 export const maxDuration = 300
 
@@ -35,9 +35,10 @@ export async function POST(request: NextRequest) {
   }
 
   // Failed sessions no longer count toward the quota, so a retry genuinely
-  // needs an available slot.
+  // needs an available slot. As in start, this check supplies the wording and
+  // short-circuits the common case; the reservation below is the authority.
   const planLimit = await checkReviewLimit(user.id)
-  if (!planLimit.allowed) {
+  const overLimit = () => {
     const planName = planLimit.plan[0].toUpperCase() + planLimit.plan.slice(1)
     return NextResponse.json(
       {
@@ -47,6 +48,7 @@ export async function POST(request: NextRequest) {
       { status: 403 }
     )
   }
+  if (!planLimit.allowed) return overLimit()
 
   // Atomically claim the retry: 'failed' -> 'queued' in one conditional update.
   // Concurrent requests (double-click, multi-tab) race here and exactly one
@@ -76,7 +78,18 @@ export async function POST(request: NextRequest) {
   // Reserve a fresh credit for this attempt. The previous attempt's row was
   // released when it failed, so this does not double-charge; recording a new
   // row rather than reviving the old one keeps the retry in the audit trail.
-  await insertReservation(user.id, planLimit.windowStart, sessionId)
+  const reservation = await reserveReviewCredit({
+    userId: user.id,
+    windowStart: planLimit.windowStart,
+    limit: planLimit.limit,
+    sessionId,
+  })
+  // Lost the race for the last credit. The claim above has already moved the
+  // session to 'queued', but 'queued' is in REAPABLE_MAIN_STATUSES, so the
+  // stuck-review reaper puts it back to 'failed' within 10 minutes and the user
+  // can retry again once they have a credit. `reason: 'error'` falls through
+  // unreserved and already reported — under-billing beats refusing a retry.
+  if (!reservation.ok && reservation.reason === 'limit') return overLimit()
 
   // Clear what the previous attempt wrote. scores/annotations are inserted, not
   // upserted, so a session that died after the scores insert would otherwise

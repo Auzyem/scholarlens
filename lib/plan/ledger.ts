@@ -10,17 +10,36 @@ import { reportError, reportWarning } from '@/lib/monitoring/sentry'
  * cascade away when a manuscript is deleted and took the user's spent
  * allowance with them.
  *
- * Counting rule, applied identically to both kinds:
- *   used = rows in state 'reserved' or 'consumed'.  'released' never counts.
+ * Counting rule:
+ *   used = every 'consumed' row, plus 'reserved' rows younger than
+ *          STALE_RESERVATION_MS.  'released' never counts.
  *
  * A reserved row counts because the work is in flight; a released row does not
- * because the work produced nothing.
+ * because the work produced nothing. The age bound exists because "in flight"
+ * has an upper limit: a reservation older than that belongs to a pipeline that
+ * died without ever releasing, and without the bound its credit would be
+ * occupied for the rest of the quota window — forever, on a non-resetting plan.
+ *
+ * Manuscript slots are exempt from the age rule because they are only ever
+ * written directly as 'consumed'; there is no such thing as a stale slot.
  */
 
 export type UsageKind = 'review' | 'manuscript_slot'
 
 /** States that occupy an allowance. Exported so callers cannot drift from it. */
 export const OCCUPYING_STATES = ['reserved', 'consumed'] as const
+
+/**
+ * How long a `reserved` row may sit before it stops occupying an allowance.
+ *
+ * The review routes cap at `maxDuration = 300`s and the stuck-review reaper
+ * fires at 10 minutes, so a hold this old is not live work — it is a pipeline
+ * that died without releasing. Ignoring it on read (rather than sweeping it on
+ * a schedule) needs no cron, no writes and no locking, and it self-corrects: if
+ * that review somehow does complete, commitReviewCredit consumes the row and it
+ * counts again.
+ */
+export const STALE_RESERVATION_MS = 60 * 60 * 1000
 
 export interface QuotaContext {
   planId: string
@@ -74,19 +93,30 @@ export async function resolveQuotaContext(userId: string, now = new Date()): Pro
   }
 }
 
-/** How much of `kind` the user has occupied since `windowStart`. */
+/**
+ * How much of `kind` the user has occupied since `windowStart`.
+ *
+ * The `.or()` is the staleness rule, and it must stay byte-for-byte equivalent
+ * to the predicate inside `reserve_review_credit` (migration 021) — that
+ * function is the authority on whether a reservation is granted, and this one
+ * produces the used/limit numbers the user is shown. If they disagree, the UI
+ * says "1 of 2 used" while the database refuses to reserve, or vice versa.
+ * PostgREST cannot express `consumed OR (reserved AND fresh)` by chaining
+ * `.eq`/`.in`, hence the raw filter string.
+ */
 export async function countUsage(
   userId: string,
   kind: UsageKind,
   windowStart: Date,
 ): Promise<number> {
   const admin = createAdminClient()
+  const staleCutoffIso = new Date(Date.now() - STALE_RESERVATION_MS).toISOString()
   const { count } = await admin
     .from('usage_events')
     .select('*', { count: 'exact', head: true })
     .eq('user_id', userId)
     .eq('kind', kind)
-    .in('state', OCCUPYING_STATES as unknown as string[])
+    .or(`state.eq.consumed,and(state.eq.reserved,created_at.gt.${staleCutoffIso})`)
     .gte('window_start', windowStart.toISOString())
   return count ?? 0
 }
@@ -126,35 +156,59 @@ export async function chargedSlotManuscriptIds(
   return { inWindow, ever }
 }
 
+export type ReservationResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: 'limit' | 'error' }
+
 /**
- * Hold a review credit before the pipeline starts.
+ * Hold a review credit before the pipeline starts — atomically.
  *
- * The hold is what prevents an overrun during the minutes a review runs. The
- * caller must have already confirmed availability via checkReviewLimit.
+ * The hold is what prevents an overrun during the minutes a review runs, but
+ * the *taking* of the hold used to be an overrun of its own: checkReviewLimit
+ * read and this function wrote, with nothing holding between them, so N
+ * concurrent requests all read "under the limit" and all inserted. One credit
+ * could buy up to the hourly abuse cap's worth of real model spend.
+ *
+ * So the count and the insert happen together inside `reserve_review_credit`
+ * (migration 021), under a per-user advisory lock. The window and the limit are
+ * still decided here in TypeScript and passed down — the function enforces
+ * numbers, it does not author them.
+ *
+ * A `limit` refusal is authoritative and the caller must turn it into a 403;
+ * checkReviewLimit stays useful only for the friendly used/limit message and
+ * for short-circuiting the common case.
  */
-export async function insertReservation(
-  userId: string,
-  windowStart: Date,
-  sessionId: string | null,
-): Promise<string | null> {
+export async function reserveReviewCredit(args: {
+  userId: string
+  windowStart: Date
+  limit: number // Number.POSITIVE_INFINITY for unlimited
+  sessionId: string | null
+}): Promise<ReservationResult> {
   const admin = createAdminClient()
-  const { data, error } = await admin
-    .from('usage_events')
-    .insert({
-      user_id: userId,
-      kind: 'review',
-      state: 'reserved',
-      review_session_id: sessionId,
-      window_start: windowStart.toISOString(),
-    })
-    .select('id')
-    .single()
+  const { data, error } = await admin.rpc('reserve_review_credit', {
+    p_user_id: args.userId,
+    p_window_start: args.windowStart.toISOString(),
+    // Unlimited is SQL null, not Infinity. JSON.stringify(Infinity) already
+    // serialises to null, but relying on that leaves the contract one JSON
+    // encoder away from sending something Postgres reads as 0.
+    p_limit: Number.isFinite(args.limit) ? args.limit : null,
+    p_session_id: args.sessionId,
+    p_stale_seconds: Math.floor(STALE_RESERVATION_MS / 1000),
+  })
 
-  // Callers that ignore the null return would run the review free and silently.
+  // Callers treat an error as "proceed unreserved", so the review runs free.
   // Under-billing is the acceptable direction, but never the invisible one.
-  if (error) reportError(error, { userId, sessionId, stage: 'usage reserve' })
+  if (error) {
+    reportError(error, { userId: args.userId, sessionId: args.sessionId, stage: 'usage reserve' })
+    return { ok: false, reason: 'error' }
+  }
 
-  return (data?.id as string | undefined) ?? null
+  // Null means the function counted at or over the limit. Either the caller was
+  // genuinely out of credits, or it lost the race to a concurrent request that
+  // took the last one — indistinguishable from here, and the same 403 either way.
+  if (data === null) return { ok: false, reason: 'limit' }
+
+  return { ok: true, id: data as string }
 }
 
 /** Attach a session to a reservation made before the session row existed. */

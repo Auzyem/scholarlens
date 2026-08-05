@@ -36,6 +36,10 @@ beforeEach(() => {
 // function that queries a table more than once per call — it reads the
 // reservations, updates them, then inserts the slot — and those steps need to
 // be able to answer differently (a clean read followed by a 23505 insert).
+//
+// `rpc` is recorded the same way and answers from `responses.rpc`, because
+// reserveReviewCredit does all of its work through one stored function and the
+// arguments it sends ARE the contract with migration 021.
 function mockAdmin(
   responses: Record<string, unknown>,
   calls: Record<string, unknown>[] = [],
@@ -46,6 +50,10 @@ function mockAdmin(
     if (Array.isArray(entry)) queues[table] = [...entry]
   }
   return {
+    rpc: vi.fn(async (fn: string, args: unknown) => {
+      calls.push({ rpc: fn, args })
+      return responses.rpc ?? { data: null, error: null }
+    }),
     from: vi.fn((table: string) => {
       const queue = queues[table]
       const result = queue
@@ -57,7 +65,7 @@ function mockAdmin(
       for (const m of ['select', 'order', 'is']) {
         builder[m] = vi.fn(() => builder)
       }
-      for (const m of ['eq', 'gte', 'in']) {
+      for (const m of ['eq', 'gte', 'in', 'or']) {
         builder[m] = vi.fn((...args: unknown[]) => {
           filterCalls.push([m, args])
           return builder
@@ -87,10 +95,11 @@ import {
   resolveQuotaContext,
   countUsage,
   chargedSlotManuscriptIds,
-  insertReservation,
+  reserveReviewCredit,
   attachSessionToReservation,
   releaseReviewCredit,
   commitReviewCredit,
+  STALE_RESERVATION_MS,
 } from '@/lib/plan/ledger'
 
 describe('resolveQuotaContext', () => {
@@ -196,22 +205,33 @@ describe('countUsage', () => {
     ).resolves.toBe(0)
   })
 
-  it('counts only reserved and consumed rows, scoped to the user, kind and window', async () => {
+  it('counts consumed and fresh-reserved rows, scoped to the user, kind and window', async () => {
     // The mock above hands back a canned count no matter what filters are
     // applied, so it can't tell a correct query from a broken one on its own.
-    // This asserts the filters themselves — in particular the
-    // in('state', ['reserved', 'consumed']) call that IS the counting rule.
-    // Deleting it would let 'released' rows count toward every user's limit,
-    // and every other test here would keep passing.
+    // This asserts the filters themselves — in particular the or() call that IS
+    // the counting rule. Deleting it would let 'released' rows count toward
+    // every user's limit, and every other test here would keep passing.
     const filterCalls: [string, unknown[]][] = []
     h.admin = mockAdmin({ usage_events: { count: 3 } }, [], filterCalls)
 
+    const now = new Date('2026-07-20T12:00:00Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(now)
     await countUsage('u1', 'review', new Date('2026-07-01T00:00:00Z'))
+    vi.useRealTimers()
+
+    // The cutoff is exactly STALE_RESERVATION_MS before now: a 'reserved' row
+    // older than that belongs to a pipeline that died without releasing, so it
+    // stops occupying the credit. That is the whole of the stranded-reservation
+    // fix, and it is invisible to every other test in this file.
+    const cutoff = new Date(now.getTime() - STALE_RESERVATION_MS).toISOString()
+    expect(cutoff).toBe('2026-07-20T11:00:00.000Z') // pins the constant itself
 
     expect(filterCalls).toEqual([
       ['eq', ['user_id', 'u1']],
       ['eq', ['kind', 'review']],
-      ['in', ['state', ['reserved', 'consumed']]],
+      // Both branches, in the shape the SQL function's predicate mirrors.
+      ['or', [`state.eq.consumed,and(state.eq.reserved,created_at.gt.${cutoff})`]],
       ['gte', ['window_start', '2026-07-01T00:00:00.000Z']],
     ])
   })
@@ -290,37 +310,69 @@ describe('chargedSlotManuscriptIds', () => {
   })
 })
 
-describe('insertReservation', () => {
-  it('writes a reserved review row and returns its id', async () => {
+describe('reserveReviewCredit', () => {
+  const args = {
+    userId: 'u1',
+    windowStart: new Date('2026-07-01T00:00:00Z'),
+    limit: 2,
+    sessionId: 'sess-1',
+  }
+
+  it('counts and inserts in one call, and returns the new reservation id', async () => {
+    // One rpc and no table writes is the point: the count and the insert happen
+    // together inside the database, so two concurrent callers cannot both read
+    // "under the limit" and both insert. A check here followed by a write would
+    // be the bug this replaces.
     const calls: Record<string, unknown>[] = []
-    h.admin = mockAdmin({ usage_events: { data: { id: 'evt-1' } } }, calls)
+    h.admin = mockAdmin({ rpc: { data: 'evt-1', error: null } }, calls)
 
-    const id = await insertReservation('u1', new Date('2026-07-01T00:00:00Z'), 'sess-1')
+    await expect(reserveReviewCredit(args)).resolves.toEqual({ ok: true, id: 'evt-1' })
 
-    expect(id).toBe('evt-1')
     expect(calls).toEqual([
       {
-        table: 'usage_events',
-        op: 'insert',
-        row: {
-          user_id: 'u1',
-          kind: 'review',
-          state: 'reserved',
-          review_session_id: 'sess-1',
-          window_start: '2026-07-01T00:00:00.000Z',
+        rpc: 'reserve_review_credit',
+        args: {
+          p_user_id: 'u1',
+          p_window_start: '2026-07-01T00:00:00.000Z',
+          p_limit: 2,
+          p_session_id: 'sess-1',
+          p_stale_seconds: 3600,
         },
       },
     ])
   })
 
+  it('sends an unlimited plan as SQL null, not Infinity', async () => {
+    // The function reads `p_limit is not null` as "unlimited". Infinity is not
+    // a JSON number, so anything other than an explicit null is one encoder
+    // away from arriving as 0 and refusing every reservation on the plans that
+    // pay the most.
+    const calls: Record<string, unknown>[] = []
+    h.admin = mockAdmin({ rpc: { data: 'evt-1', error: null } }, calls)
+
+    await reserveReviewCredit({ ...args, limit: Number.POSITIVE_INFINITY })
+
+    expect((calls[0] as { args: { p_limit: unknown } }).args.p_limit).toBeNull()
+  })
+
+  it('refuses with reason "limit" when the function returns no id', async () => {
+    // Null means the count reached the limit — either the user is genuinely out
+    // of credits, or this request lost the race for the last one. The caller
+    // returns the same 403 either way, and nothing is reported: being at your
+    // limit is not an error.
+    h.admin = mockAdmin({ rpc: { data: null, error: null } })
+
+    await expect(reserveReviewCredit(args)).resolves.toEqual({ ok: false, reason: 'limit' })
+    expect(m.errors).toEqual([])
+  })
+
   it('reports a failed reservation instead of failing silently', async () => {
-    // Callers in confirm/retry discard the return value, so the review runs
-    // free. That under-bills, which is allowed — being invisible is not.
-    h.admin = mockAdmin({ usage_events: { data: null, error: { message: 'timeout' } } })
+    // Callers proceed unreserved on an error, so the review runs free. That
+    // under-bills, which is allowed — being invisible is not. The distinct
+    // reason is what keeps them from turning an outage into a 403.
+    h.admin = mockAdmin({ rpc: { data: null, error: { message: 'timeout' } } })
 
-    const id = await insertReservation('u1', new Date('2026-07-01T00:00:00Z'), 'sess-1')
-
-    expect(id).toBeNull()
+    await expect(reserveReviewCredit(args)).resolves.toEqual({ ok: false, reason: 'error' })
     expect(m.errors).toHaveLength(1)
     expect(m.errors[0].ctx).toMatchObject({ userId: 'u1', sessionId: 'sess-1' })
   })

@@ -9,7 +9,10 @@ function mockAdmin(responses: Record<string, unknown>, neqCalls: [string, unknow
     from: vi.fn((table: string) => {
       const result = responses[table] ?? { data: null, count: 0 }
       const builder: Record<string, unknown> = {}
-      for (const m of ['select', 'eq', 'gte', 'in', 'order']) {
+      // `or` is here because countUsage runs for real against this mock and
+      // expresses its staleness rule with one — see tests/planLedger.test.ts,
+      // which is where that filter's *content* is asserted.
+      for (const m of ['select', 'eq', 'gte', 'in', 'or', 'order']) {
         builder[m] = vi.fn(() => builder)
       }
       // Recorded rather than merely chainable: the quota-release behaviour IS

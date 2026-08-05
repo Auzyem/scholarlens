@@ -3,7 +3,7 @@ import { waitUntil } from '@vercel/functions'
 import { createClient } from '@/lib/supabase/server'
 import { runDeepReviewStage } from '@/lib/ai/pipeline'
 import { checkReviewLimit } from '@/lib/plan/gates'
-import { insertReservation } from '@/lib/plan/ledger'
+import { reserveReviewCredit } from '@/lib/plan/ledger'
 import type { ReviewerPersona } from '@/lib/types'
 
 export const maxDuration = 300
@@ -64,13 +64,18 @@ export async function POST(request: NextRequest) {
   //
   // Claiming before reserving is deliberate: the loser of the race never gets
   // this far, so there is no reservation to roll back. The cost is that a quota
-  // rejection below leaves the session at 'reviewing' with no work running — but
-  // 'reviewing' is in REAPABLE_MAIN_STATUSES, so the stuck-review reaper fails it
-  // properly within 10 minutes. That is not a leak. The reverse order would be
-  // worse: it can write a reservation for a session that stays parked forever,
-  // because 'awaiting_confirmation' is deliberately never reaped.
+  // rejection below leaves the session at 'reviewing' with no work running — and
+  // that now includes a rejection from the reservation itself, not just from the
+  // check. Both are fine for the same reason: 'reviewing' is in
+  // REAPABLE_MAIN_STATUSES, so the stuck-review reaper fails it properly within
+  // 10 minutes. That is not a leak. The reverse order would be worse: it can
+  // write a reservation for a session that stays parked forever, because
+  // 'awaiting_confirmation' is deliberately never reaped.
+  //
+  // As in start, the check supplies the wording and the reservation supplies the
+  // enforcement.
   const planLimit = await checkReviewLimit(user.id)
-  if (!planLimit.allowed) {
+  const overLimit = () => {
     const planName = planLimit.plan[0].toUpperCase() + planLimit.plan.slice(1)
     return NextResponse.json(
       {
@@ -80,7 +85,18 @@ export async function POST(request: NextRequest) {
       { status: 403 }
     )
   }
-  await insertReservation(user.id, planLimit.windowStart, sessionId)
+  if (!planLimit.allowed) return overLimit()
+
+  const reservation = await reserveReviewCredit({
+    userId: user.id,
+    windowStart: planLimit.windowStart,
+    limit: planLimit.limit,
+    sessionId,
+  })
+  // Lost the race for the last credit. `reason: 'error'` deliberately falls
+  // through unreserved and already reported — under-billing beats refusing a
+  // review the user is entitled to.
+  if (!reservation.ok && reservation.reason === 'limit') return overLimit()
 
   const manuscriptId = (session.drafts as unknown as { manuscript_id: string } | null)?.manuscript_id
 
