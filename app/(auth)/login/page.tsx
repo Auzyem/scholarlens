@@ -8,11 +8,27 @@ import { Card } from '@/components/ui/card'
 import { GoogleButton } from '@/components/auth/GoogleButton'
 import { Logo } from '@/components/layout/Logo'
 
+/**
+ * Isolated so that `useSearchParams` opts ONLY this banner out of server
+ * rendering. It used to sit inside the form component, which put the entire
+ * login page inside the Suspense boundary — with `fallback={null}` that shipped
+ * an empty page and no form at all until JavaScript hydrated. The login form is
+ * the last thing in the app that should depend on client-side rendering.
+ *
+ * /auth/callback redirects here with ?error=oauth when the code exchange fails.
+ * Left unrendered it looked like the Google button simply did nothing.
+ */
+function OAuthErrorBanner() {
+  if (useSearchParams().get('error') !== 'oauth') return null
+  return (
+    <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+      Sign-in with Google didn&apos;t complete. Please try again.
+    </p>
+  )
+}
+
 function LoginForm() {
   const router = useRouter()
-  // /auth/callback redirects here with ?error=oauth when the code exchange
-  // fails. Left unrendered it looked like the Google button simply did nothing.
-  const oauthFailed = useSearchParams().get('error') === 'oauth'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -48,11 +64,9 @@ function LoginForm() {
       <Logo size={32} />
       <Card className="w-full max-w-sm p-6">
         <h1 className="mb-4 text-xl font-semibold text-pr-navy">Log in</h1>
-        {oauthFailed && (
-          <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            Sign-in with Google didn&apos;t complete. Please try again.
-          </p>
-        )}
+        <Suspense fallback={null}>
+          <OAuthErrorBanner />
+        </Suspense>
         <form onSubmit={handleLogin} className="space-y-3">
           <input className="w-full rounded border p-2" type="email" placeholder="Email"
             value={email} onChange={e => setEmail(e.target.value)} required />
@@ -80,12 +94,9 @@ function LoginForm() {
   )
 }
 
-// useSearchParams opts the subtree into client-side rendering; without a
-// Suspense boundary the production build fails to prerender this route.
+// The Suspense boundary lives around OAuthErrorBanner rather than out here, so
+// the form itself still server-renders. Wrapping the whole page satisfies the
+// build the same way, but ships a blank card.
 export default function LoginPage() {
-  return (
-    <Suspense fallback={null}>
-      <LoginForm />
-    </Suspense>
-  )
+  return <LoginForm />
 }
