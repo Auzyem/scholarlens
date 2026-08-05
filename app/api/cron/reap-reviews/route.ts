@@ -6,6 +6,7 @@ import {
   STUCK_THRESHOLD_MS,
   type ReviewSessionClocks,
 } from '@/lib/review/stuck'
+import { releaseReviewCredit } from '@/lib/plan/ledger'
 
 export const maxDuration = 60
 
@@ -116,6 +117,11 @@ export async function GET(request: NextRequest) {
         continue
       }
       if (claimed && claimed.length > 0) {
+        // Only the main lifecycle ever held a review credit; the three
+        // sub-pipelines run on an already-charged session.
+        if (lifecycle.column === 'status') {
+          await releaseReviewCredit(row.id)
+        }
         console.warn(`[reap-reviews] ${row.id}: ${lifecycle.column} '${lifecycle.from}' -> failed`)
         reaped.push({ sessionId: row.id, column: lifecycle.column, from: lifecycle.from })
       }

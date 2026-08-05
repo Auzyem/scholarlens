@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { runReviewPipeline } from '@/lib/ai/pipeline'
 import { checkReviewLimit } from '@/lib/plan/gates'
+import { insertReservation } from '@/lib/plan/ledger'
 
 export const maxDuration = 300
 
@@ -71,6 +72,11 @@ export async function POST(request: NextRequest) {
   if (!claimed || claimed.length === 0) {
     return NextResponse.json({ error: 'Review is already being retried' }, { status: 409 })
   }
+
+  // Reserve a fresh credit for this attempt. The previous attempt's row was
+  // released when it failed, so this does not double-charge; recording a new
+  // row rather than reviving the old one keeps the retry in the audit trail.
+  await insertReservation(user.id, planLimit.windowStart, sessionId)
 
   // Clear what the previous attempt wrote. scores/annotations are inserted, not
   // upserted, so a session that died after the scores insert would otherwise

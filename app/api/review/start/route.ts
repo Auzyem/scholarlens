@@ -6,6 +6,7 @@ import { resolveAuth } from '@/lib/apiKeys/middleware'
 import { runReviewPipeline } from '@/lib/ai/pipeline'
 import { RATE_LIMITS, ACTIVE_REVIEW_STATUSES, hourAgoIso } from '@/lib/rateLimit'
 import { checkReviewLimit } from '@/lib/plan/gates'
+import { insertReservation, attachSessionToReservation } from '@/lib/plan/ledger'
 
 export const maxDuration = 300
 
@@ -74,16 +75,30 @@ export async function POST(request: NextRequest) {
     )
   }
 
+  // Hold the credit before the pipeline starts. Reserved against the same
+  // window the check above used, so a window roll mid-request cannot let two
+  // requests through on one credit.
+  const reservationId = await insertReservation(userId, planLimit.windowStart, null)
+
   const { data: session, error } = await supabase
     .from('review_sessions')
     .insert({ draft_id: draftId, mode, status: 'queued' })
     .select()
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!session?.id) {
-    return NextResponse.json({ error: 'Failed to create review session' }, { status: 500 })
+  // A leaked reservation would occupy a credit forever, so both failure paths
+  // hand it back before returning.
+  if (error || !session?.id) {
+    if (reservationId) {
+      await createAdminClient().from('usage_events').delete().eq('id', reservationId)
+    }
+    return NextResponse.json(
+      { error: error?.message ?? 'Failed to create review session' },
+      { status: 500 }
+    )
   }
+
+  if (reservationId) await attachSessionToReservation(reservationId, session.id)
 
   // Run the pipeline detached from the response lifecycle. The promise starts
   // executing immediately; waitUntil keeps the serverless function alive on
