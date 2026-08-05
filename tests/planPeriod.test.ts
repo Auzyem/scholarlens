@@ -111,8 +111,23 @@ describe('quotaWindowStart', () => {
   })
 
   it('falls back to the calendar month when non-resetting but the creation date is unusable', () => {
+    // periodStartIso must be non-null here: passing null would let the
+    // pre-existing `if (!periodStartIso) return calendarMonthStart(now)` guard
+    // produce this exact answer regardless of whether the resets===false
+    // branch exists or works at all, making the assertion vacuous. A real
+    // anchor forces execution through the non-resetting branch, so this only
+    // passes if that branch itself falls back on an unparseable creation date.
     expect(
-      quotaWindowStart(null, at('2026-07-30T12:00:00Z'), {
+      quotaWindowStart('2026-07-28T09:15:00.000Z', at('2026-07-30T12:00:00Z'), {
+        resets: false,
+        accountCreatedAt: 'not-a-date',
+      }).toISOString()
+    ).toBe('2026-07-01T00:00:00.000Z')
+  })
+
+  it('falls back to the calendar month when non-resetting and accountCreatedAt is null, even with a billing anchor present', () => {
+    expect(
+      quotaWindowStart('2026-07-28T09:15:00.000Z', at('2026-07-30T12:00:00Z'), {
         resets: false,
         accountCreatedAt: null,
       }).toISOString()

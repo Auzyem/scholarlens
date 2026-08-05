@@ -4,13 +4,30 @@ import { describe, it, expect, vi } from 'vitest'
 // 'server-only') never loads under Vitest, matching tests/planGates.test.ts.
 // Each table gets one canned response per test; every function under test
 // queries a given table at most once per call.
-function mockAdmin(responses: Record<string, unknown>, calls: Record<string, unknown>[] = []) {
+//
+// `filterCalls` records every eq/in/gte invocation (in call order) rather than
+// merely chaining through: the counting rule and the release/commit
+// idempotency both live entirely in which filters get applied, so a vacuous
+// mock that just returns the builder would let those filters be deleted
+// without any test noticing. See tests/planGates.test.ts's `neqCalls` for the
+// same pattern.
+function mockAdmin(
+  responses: Record<string, unknown>,
+  calls: Record<string, unknown>[] = [],
+  filterCalls: [string, unknown[]][] = [],
+) {
   return {
     from: vi.fn((table: string) => {
       const result = responses[table] ?? { data: null, count: 0 }
       const builder: Record<string, unknown> = {}
-      for (const m of ['select', 'eq', 'gte', 'in', 'order', 'neq', 'is']) {
+      for (const m of ['select', 'order', 'is']) {
         builder[m] = vi.fn(() => builder)
+      }
+      for (const m of ['eq', 'gte', 'in']) {
+        builder[m] = vi.fn((...args: unknown[]) => {
+          filterCalls.push([m, args])
+          return builder
+        })
       }
       builder.insert = vi.fn((row: unknown) => {
         calls.push({ table, op: 'insert', row })
@@ -98,6 +115,26 @@ describe('countUsage', () => {
       countUsage('u1', 'review', new Date('2026-07-01T00:00:00Z'))
     ).resolves.toBe(0)
   })
+
+  it('counts only reserved and consumed rows, scoped to the user, kind and window', async () => {
+    // The mock above hands back a canned count no matter what filters are
+    // applied, so it can't tell a correct query from a broken one on its own.
+    // This asserts the filters themselves — in particular the
+    // in('state', ['reserved', 'consumed']) call that IS the counting rule.
+    // Deleting it would let 'released' rows count toward every user's limit,
+    // and every other test here would keep passing.
+    const filterCalls: [string, unknown[]][] = []
+    h.admin = mockAdmin({ usage_events: { count: 3 } }, [], filterCalls)
+
+    await countUsage('u1', 'review', new Date('2026-07-01T00:00:00Z'))
+
+    expect(filterCalls).toEqual([
+      ['eq', ['user_id', 'u1']],
+      ['eq', ['kind', 'review']],
+      ['in', ['state', ['reserved', 'consumed']]],
+      ['gte', ['window_start', '2026-07-01T00:00:00.000Z']],
+    ])
+  })
 })
 
 describe('insertReservation', () => {
@@ -127,7 +164,8 @@ describe('insertReservation', () => {
 describe('releaseReviewCredit', () => {
   it('releases only the reservation still held for that session', async () => {
     const calls: Record<string, unknown>[] = []
-    h.admin = mockAdmin({ usage_events: { data: [] } }, calls)
+    const filterCalls: [string, unknown[]][] = []
+    h.admin = mockAdmin({ usage_events: { data: [] } }, calls, filterCalls)
 
     await releaseReviewCredit('sess-1')
 
@@ -135,6 +173,11 @@ describe('releaseReviewCredit', () => {
     // it twice matches zero rows the second time.
     expect(calls).toEqual([
       { table: 'usage_events', op: 'update', patch: { state: 'released' } },
+    ])
+    expect(filterCalls).toEqual([
+      ['eq', ['review_session_id', 'sess-1']],
+      ['eq', ['kind', 'review']],
+      ['eq', ['state', 'reserved']],
     ])
   })
 })
