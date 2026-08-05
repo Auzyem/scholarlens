@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { quotaWindowStart } from '@/lib/plan/period'
+import { reportError, reportWarning } from '@/lib/monitoring/sentry'
 
 /**
  * The durable usage ledger.
@@ -125,7 +126,7 @@ export async function insertReservation(
   sessionId: string | null,
 ): Promise<string | null> {
   const admin = createAdminClient()
-  const { data } = await admin
+  const { data, error } = await admin
     .from('usage_events')
     .insert({
       user_id: userId,
@@ -136,6 +137,11 @@ export async function insertReservation(
     })
     .select('id')
     .single()
+
+  // Callers that ignore the null return would run the review free and silently.
+  // Under-billing is the acceptable direction, but never the invisible one.
+  if (error) reportError(error, { userId, sessionId, stage: 'usage reserve' })
+
   return (data?.id as string | undefined) ?? null
 }
 
@@ -145,7 +151,14 @@ export async function attachSessionToReservation(
   sessionId: string,
 ): Promise<void> {
   const admin = createAdminClient()
-  await admin.from('usage_events').update({ review_session_id: sessionId }).eq('id', eventId)
+  const { error } = await admin
+    .from('usage_events')
+    .update({ review_session_id: sessionId })
+    .eq('id', eventId)
+
+  // An unattached row is unreachable: no release can find it and no commit can
+  // consume it, so the credit stays reserved forever. It needs a human.
+  if (error) reportError(error, { eventId, sessionId, stage: 'usage attach session' })
 }
 
 /**
@@ -156,17 +169,25 @@ export async function attachSessionToReservation(
  */
 export async function releaseReviewCredit(sessionId: string): Promise<void> {
   const admin = createAdminClient()
-  await admin
+  const { error } = await admin
     .from('usage_events')
     .update({ state: 'released' })
     .eq('review_session_id', sessionId)
     .eq('kind', 'review')
     .eq('state', 'reserved')
+
+  // A failed release strands the credit, and worse: a later re-reservation for
+  // the same session leaves two reserved rows behind. commitReviewCredit is
+  // built to survive that, but it must not happen unseen.
+  if (error) reportError(error, { sessionId, stage: 'usage release' })
 }
 
 /**
- * Spend the credit, and charge the manuscript's slot if this is the first
- * review it has completed.
+ * Spend exactly one credit, and charge the manuscript's slot if this is the
+ * first review it has completed.
+ *
+ * Also self-healing: any surplus reservations held by the same session are
+ * released here, so a release that failed earlier cannot strand a credit.
  *
  * The slot insert races against the partial unique index rather than checking
  * first — a re-review is *expected* to violate it, and letting the database
@@ -184,12 +205,73 @@ export async function commitReviewCredit(args: {
 }): Promise<void> {
   const admin = createAdminClient()
 
-  await admin
+  // Read the reservations first rather than updating by session, because a
+  // session can legitimately hold more than one: a release that failed
+  // transiently (confirm/retry both re-reserve) leaves its row `reserved`, and
+  // a blanket update would consume every one of them — charging a user several
+  // credits for the single review they received.
+  const { data: reserved, error: readError } = await admin
     .from('usage_events')
-    .update({ state: 'consumed', consumed_at: new Date().toISOString() })
+    .select('id')
     .eq('review_session_id', args.sessionId)
     .eq('kind', 'review')
     .eq('state', 'reserved')
+    .order('created_at', { ascending: true })
+
+  if (readError) {
+    reportError(readError, {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      stage: 'usage commit: read reservations',
+    })
+  }
+
+  const [consumeId, ...duplicates] = ((reserved ?? []) as { id: string }[]).map((r) => r.id)
+
+  if (!consumeId) {
+    // No reservation to spend. Under-billing is the acceptable direction, so
+    // the review still stands and the slot below is still charged — but this
+    // means a credit was never held for work that completed, so say so.
+    reportWarning('review completed with no reservation to consume', {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      manuscriptId: args.manuscriptId,
+    })
+  } else {
+    const { error: consumeError } = await admin
+      .from('usage_events')
+      .update({ state: 'consumed', consumed_at: new Date().toISOString() })
+      .eq('id', consumeId)
+
+    if (consumeError) {
+      reportError(consumeError, {
+        sessionId: args.sessionId,
+        userId: args.userId,
+        eventId: consumeId,
+        stage: 'usage commit: consume',
+      })
+    }
+
+    // Releasing the extras is what makes commit self-healing. Every duplicate
+    // here is a reservation whose release failed earlier; left alone it would
+    // occupy a credit for the rest of the user's quota window (forever, on a
+    // non-resetting plan) for a review that has already been paid for once.
+    if (duplicates.length > 0) {
+      const { error: releaseError } = await admin
+        .from('usage_events')
+        .update({ state: 'released' })
+        .in('id', duplicates)
+
+      if (releaseError) {
+        reportError(releaseError, {
+          sessionId: args.sessionId,
+          userId: args.userId,
+          duplicateCount: duplicates.length,
+          stage: 'usage commit: release duplicates',
+        })
+      }
+    }
+  }
 
   const { error } = await admin.from('usage_events').insert({
     user_id: args.userId,
