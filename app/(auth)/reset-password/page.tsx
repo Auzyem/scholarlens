@@ -15,10 +15,45 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // /auth/callback has already exchanged the recovery code for a session by the
-  // time we get here. Without one there is nothing to update.
+  // The session reaches us three ways. /auth/callback and /auth/confirm put it
+  // in cookies before this page renders, so getSession() sees it immediately.
+  // The implicit hash flow does not: RecoveryRedirect establishes it in the
+  // browser, and that can still be settling when we mount. A lone early
+  // getSession() would therefore call a perfectly good link expired, so we also
+  // listen for the auth event and only give up after a short grace period.
   useEffect(() => {
-    createClient().auth.getSession().then(({ data }) => setReady(!!data.session))
+    const supabase = createClient()
+    let gone = false
+    let hasSession = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    // "Ready" is final; "expired" never is. A session arriving late should flip
+    // the page back to the form, because showing it a beat late costs nothing
+    // and a false "expired" costs the user a working link.
+    function markReady() {
+      if (gone || hasSession) return
+      hasSession = true
+      if (timer) clearTimeout(timer)
+      setReady(true)
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session && (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN')) markReady()
+    })
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (gone) return
+      if (data.session) { markReady(); return }
+      // Nothing in storage yet. Give the client-side flow a moment to land one
+      // before calling the link dead — but do call it, so this never just hangs.
+      timer = setTimeout(() => { if (!gone && !hasSession) setReady(false) }, 1500)
+    })
+
+    return () => {
+      gone = true
+      subscription.unsubscribe()
+      if (timer) clearTimeout(timer)
+    }
   }, [])
 
   async function handleSubmit(e: React.FormEvent) {
