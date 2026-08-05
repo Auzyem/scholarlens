@@ -70,7 +70,14 @@ async function rest(path, init = {}) {
     },
   })
   if (!res.ok) throw new Error(`${path} -> ${res.status} ${await res.text()}`)
-  return res.status === 204 ? null : res.json()
+
+  // A PostgREST insert answers 201 with an EMPTY body unless it was asked for a
+  // representation, so parsing unconditionally throws "Unexpected end of JSON
+  // input" *after* the rows have already committed — which is how the first
+  // apply run wrote its review credits and then died before the slots. Decide
+  // by the body itself rather than by guessing which statuses carry one.
+  const body = await res.text()
+  return body ? JSON.parse(body) : null
 }
 
 /**
