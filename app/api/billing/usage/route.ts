@@ -17,7 +17,7 @@ export async function GET() {
       checkReviewLimit(user.id),
       supabase
         .from('subscriptions')
-        .select('plan_id, plans(adversarial_access, journal_matching, pdf_reports, api_access, max_api_keys)')
+        .select('plan_id, plans(adversarial_access, journal_matching, pdf_reports, api_access, max_api_keys, quota_resets)')
         .eq('user_id', user.id)
         .single(),
       supabase.from('api_keys').select('*', { count: 'exact', head: true }).eq('user_id', user.id).eq('revoked', false),
@@ -29,6 +29,7 @@ export async function GET() {
       pdf_reports: boolean
       api_access: boolean
       max_api_keys: number | null
+      quota_resets: boolean | null
     } | null
 
     // Infinity (unlimited / super_admin) isn't valid JSON — null means unlimited on the wire.
@@ -38,6 +39,13 @@ export async function GET() {
       plan: sub?.plan_id ?? 'free',
       manuscripts: { used: manuscripts.used, limit: toWireLimit(manuscripts.limit) },
       reviewsThisMonth: { used: reviewsThisMonth.used, limit: toWireLimit(reviewsThisMonth.limit) },
+      // A plans row predating migration 020 has no flag; those all reset.
+      resets: plan?.quota_resets !== false,
+      // "Exhausted" means no further reviews are possible right now. On a
+      // non-resetting plan (Free) that means upgrade; on a paid plan it means
+      // wait for the next billing month.
+      exhausted:
+        Number.isFinite(reviewsThisMonth.limit) && reviewsThisMonth.used >= reviewsThisMonth.limit,
       features: {
         adversarial_access: plan?.adversarial_access ?? false,
         journal_matching: plan?.journal_matching ?? false,

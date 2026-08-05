@@ -28,7 +28,7 @@ export async function middleware(request: NextRequest) {
   // pathname starts with '/', so including it made `isPublic` unconditionally
   // true and the redirect below unreachable — the guard silently protected
   // nothing. The marketing root is matched exactly instead.
-  const publicPrefixes = ['/login', '/signup', '/api', '/auth', '/legal']
+  const publicPrefixes = ['/login', '/signup', '/forgot-password', '/reset-password', '/api', '/auth', '/legal']
   const isPublic = pathname === '/' || publicPrefixes.some(p => pathname.startsWith(p))
   const isAuthPage = pathname === '/login' || pathname === '/signup'
 

@@ -6,6 +6,7 @@ import { resolveAuth } from '@/lib/apiKeys/middleware'
 import { runReviewPipeline } from '@/lib/ai/pipeline'
 import { RATE_LIMITS, ACTIVE_REVIEW_STATUSES, hourAgoIso } from '@/lib/rateLimit'
 import { checkReviewLimit } from '@/lib/plan/gates'
+import { reserveReviewCredit, attachSessionToReservation } from '@/lib/plan/ledger'
 
 export const maxDuration = 300
 
@@ -65,14 +66,38 @@ export async function POST(request: NextRequest) {
   }
 
   // 3) the plan's monthly review cap (business limit, distinct from the hourly abuse cap above)
+  //
+  // This check exists for the message, not the enforcement: it is what produces
+  // the friendly used/limit/plan wording and short-circuits the common case. The
+  // reservation below is the authority.
   const planLimit = await checkReviewLimit(userId)
-  if (!planLimit.allowed) {
+  const overLimit = () => {
     const planName = planLimit.plan[0].toUpperCase() + planLimit.plan.slice(1)
     return NextResponse.json(
       { error: `Monthly review limit reached (${planLimit.used}/${planLimit.limit} on the ${planName} plan)`, upgradeUrl: '/billing' },
       { status: 403 }
     )
   }
+  if (!planLimit.allowed) return overLimit()
+
+  // Hold the credit before the pipeline starts. Reserved against the same
+  // window the check above used, so a window roll mid-request cannot let two
+  // requests through on one credit — and counted and inserted in one atomic
+  // step, so neither can two requests that both passed the check above.
+  const reservation = await reserveReviewCredit({
+    userId,
+    windowStart: planLimit.windowStart,
+    limit: planLimit.limit,
+    sessionId: null,
+  })
+
+  // Refused on the limit: this is the request that lost the race, or the check
+  // above read a stale count. Same 403 either way.
+  if (!reservation.ok && reservation.reason === 'limit') return overLimit()
+
+  // `reason: 'error'` falls through unreserved and already reported — the review
+  // runs free rather than failing the user for an infrastructure problem.
+  const reservationId = reservation.ok ? reservation.id : null
 
   const { data: session, error } = await supabase
     .from('review_sessions')
@@ -80,10 +105,19 @@ export async function POST(request: NextRequest) {
     .select()
     .single()
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  if (!session?.id) {
-    return NextResponse.json({ error: 'Failed to create review session' }, { status: 500 })
+  // A leaked reservation would occupy a credit for a session that never
+  // existed, so the failure path hands it back — when there is one to hand back.
+  if (error || !session?.id) {
+    if (reservationId) {
+      await createAdminClient().from('usage_events').delete().eq('id', reservationId)
+    }
+    return NextResponse.json(
+      { error: error?.message ?? 'Failed to create review session' },
+      { status: 500 }
+    )
   }
+
+  if (reservationId) await attachSessionToReservation(reservationId, session.id)
 
   // Run the pipeline detached from the response lifecycle. The promise starts
   // executing immediately; waitUntil keeps the serverless function alive on

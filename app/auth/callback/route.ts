@@ -15,5 +15,11 @@ export async function GET(request: NextRequest) {
     if (!error) return NextResponse.redirect(`${origin}${next}`)
   }
 
+  // A failed exchange on the recovery flow means an expired or already-used
+  // reset link. Send those to /forgot-password, where requesting a fresh one is
+  // the single obvious action — not to /login, which cannot help.
+  if (next === '/reset-password') {
+    return NextResponse.redirect(`${origin}/forgot-password?expired=1`)
+  }
   return NextResponse.redirect(`${origin}/login?error=oauth`)
 }

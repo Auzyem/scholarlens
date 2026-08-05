@@ -1,6 +1,6 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -8,8 +8,11 @@ import { Card } from '@/components/ui/card'
 import { GoogleButton } from '@/components/auth/GoogleButton'
 import { Logo } from '@/components/layout/Logo'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
+  // /auth/callback redirects here with ?error=oauth when the code exchange
+  // fails. Left unrendered it looked like the Google button simply did nothing.
+  const oauthFailed = useSearchParams().get('error') === 'oauth'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -21,7 +24,19 @@ export default function LoginPage() {
     const supabase = createClient()
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
-    if (error) { setError(error.message); return }
+    if (error) {
+      // "Invalid login credentials" is also what Supabase returns when the
+      // account has no password at all — the case for anyone who signed up
+      // with Google. Naming both recovery routes turns a dead end into a fix.
+      setError(
+        error.message === 'Invalid login credentials'
+          ? 'We couldn’t sign you in. If you signed up with Google, use "Continue with Google" below — or reset your password to set one.'
+          : error.message === 'Email not confirmed'
+            ? 'Please confirm your email first — check your inbox for the link we sent.'
+            : error.message
+      )
+      return
+    }
     // replace (not push) so the login page is not left in history, and refresh
     // so the middleware re-reads the freshly-set session cookie.
     router.replace('/dashboard')
@@ -33,6 +48,11 @@ export default function LoginPage() {
       <Logo size={32} />
       <Card className="w-full max-w-sm p-6">
         <h1 className="mb-4 text-xl font-semibold text-pr-navy">Log in</h1>
+        {oauthFailed && (
+          <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Sign-in with Google didn&apos;t complete. Please try again.
+          </p>
+        )}
         <form onSubmit={handleLogin} className="space-y-3">
           <input className="w-full rounded border p-2" type="email" placeholder="Email"
             value={email} onChange={e => setEmail(e.target.value)} required />
@@ -42,6 +62,11 @@ export default function LoginPage() {
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? 'Logging in…' : 'Log in'}
           </Button>
+          <div className="text-right">
+            <Link href="/forgot-password" className="text-xs text-muted-foreground underline hover:text-foreground">
+              Forgot password?
+            </Link>
+          </div>
         </form>
         <div className="my-4 flex items-center gap-3 text-xs text-muted-foreground">
           <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
@@ -52,5 +77,15 @@ export default function LoginPage() {
         </p>
       </Card>
     </div>
+  )
+}
+
+// useSearchParams opts the subtree into client-side rendering; without a
+// Suspense boundary the production build fails to prerender this route.
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   )
 }

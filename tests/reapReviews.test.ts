@@ -56,6 +56,10 @@ vi.mock('@/lib/supabase/admin', () => ({
   }),
 }))
 
+// The release is exercised by the ledger's own tests; stubbing it here keeps
+// this file asserting only the sweep's update shape, which is its contract.
+vi.mock('@/lib/plan/ledger', () => ({ releaseReviewCredit: vi.fn() }))
+
 import { GET } from '@/app/api/cron/reap-reviews/route'
 
 const SECRET = 'test-cron-secret'

@@ -4,6 +4,7 @@ import { reportError, reportWarning, flushMonitoring } from '@/lib/monitoring/se
 import { runDisciplineRouter } from './prompts/disciplineRouter'
 import { runDeepReviewer } from './prompts/deepReviewer'
 import { runProgressComparator } from './prompts/progressComparator'
+import { commitReviewCredit, releaseReviewCredit, resolveQuotaContext } from '@/lib/plan/ledger'
 import type { ReviewStatus, ReviewerPersona, Score, Annotation } from '@/lib/types'
 
 // Below this routing confidence we pause for the user to confirm/override the
@@ -80,7 +81,14 @@ export async function runReviewPipeline(sessionId: string) {
 
     if (routing.confidence < CONFIDENCE_THRESHOLD) {
       // Pause for human confirmation; the confirm route resumes via runDeepReviewStage.
+      //
+      // Hand the credit back while we wait. This pause is excluded from the
+      // stuck-review reaper and can sit for days, so a held credit here would
+      // never be consumed or released — a user who abandons the confirmation
+      // would lose it permanently having received nothing. The confirm route
+      // re-reserves before resuming.
       await updateStatus('awaiting_confirmation')
+      await releaseReviewCredit(sessionId)
       return
     }
 
@@ -97,6 +105,8 @@ export async function runReviewPipeline(sessionId: string) {
       status: 'failed',
       error_message: message,
     }).eq('id', sessionId)
+    // A review that produced nothing must not be charged.
+    await releaseReviewCredit(sessionId)
     throw err
   } finally {
     // This pipeline runs detached under waitUntil; Vercel can freeze the
@@ -181,6 +191,24 @@ export async function runDeepReviewStage(sessionId: string) {
       { sessionId },
     )
 
+    // The review exists and the user has it — spend the credit now, and charge
+    // the manuscript's slot if this is its first completed review.
+    //
+    // Deliberately not wrapped in mustWrite: by this point the user already has
+    // their review, so failing to charge under-bills rather than losing work.
+    // That is the correct direction to fail; report it and carry on.
+    try {
+      const { windowStart } = await resolveQuotaContext(manuscript.user_id)
+      await commitReviewCredit({
+        sessionId,
+        userId: manuscript.user_id,
+        manuscriptId: manuscript.id,
+        windowStart,
+      })
+    } catch (e) {
+      reportError(e, { sessionId, stage: 'usage commit', manuscriptId: manuscript.id })
+    }
+
     // Best-effort draft-to-draft comparison; never fails the (already saved)
     // review, so this reports as a warning rather than throwing.
     try {
@@ -200,6 +228,8 @@ export async function runDeepReviewStage(sessionId: string) {
       status: 'failed',
       error_message: message,
     }).eq('id', sessionId)
+    // A review that produced nothing must not be charged.
+    await releaseReviewCredit(sessionId)
     throw err
   } finally {
     await flushMonitoring()
