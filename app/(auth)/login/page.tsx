@@ -1,6 +1,6 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -8,8 +8,11 @@ import { Card } from '@/components/ui/card'
 import { GoogleButton } from '@/components/auth/GoogleButton'
 import { Logo } from '@/components/layout/Logo'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
+  // /auth/callback redirects here with ?error=oauth when the code exchange
+  // fails. Left unrendered it looked like the Google button simply did nothing.
+  const oauthFailed = useSearchParams().get('error') === 'oauth'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -45,6 +48,11 @@ export default function LoginPage() {
       <Logo size={32} />
       <Card className="w-full max-w-sm p-6">
         <h1 className="mb-4 text-xl font-semibold text-pr-navy">Log in</h1>
+        {oauthFailed && (
+          <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Sign-in with Google didn&apos;t complete. Please try again.
+          </p>
+        )}
         <form onSubmit={handleLogin} className="space-y-3">
           <input className="w-full rounded border p-2" type="email" placeholder="Email"
             value={email} onChange={e => setEmail(e.target.value)} required />
@@ -69,5 +77,15 @@ export default function LoginPage() {
         </p>
       </Card>
     </div>
+  )
+}
+
+// useSearchParams opts the subtree into client-side rendering; without a
+// Suspense boundary the production build fails to prerender this route.
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   )
 }

@@ -81,7 +81,14 @@ export async function runReviewPipeline(sessionId: string) {
 
     if (routing.confidence < CONFIDENCE_THRESHOLD) {
       // Pause for human confirmation; the confirm route resumes via runDeepReviewStage.
+      //
+      // Hand the credit back while we wait. This pause is excluded from the
+      // stuck-review reaper and can sit for days, so a held credit here would
+      // never be consumed or released — a user who abandons the confirmation
+      // would lose it permanently having received nothing. The confirm route
+      // re-reserves before resuming.
       await updateStatus('awaiting_confirmation')
+      await releaseReviewCredit(sessionId)
       return
     }
 

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { waitUntil } from '@vercel/functions'
 import { createClient } from '@/lib/supabase/server'
 import { runDeepReviewStage } from '@/lib/ai/pipeline'
+import { checkReviewLimit } from '@/lib/plan/gates'
+import { insertReservation } from '@/lib/plan/ledger'
 import type { ReviewerPersona } from '@/lib/types'
 
 export const maxDuration = 300
@@ -37,6 +39,22 @@ export async function POST(request: NextRequest) {
   if (session.status !== 'awaiting_confirmation') {
     return NextResponse.json({ error: 'Session is not awaiting confirmation' }, { status: 409 })
   }
+
+  // The credit was handed back when the pipeline parked here, so resuming needs
+  // an available slot again — the user may have spent their allowance elsewhere
+  // while this sat waiting.
+  const planLimit = await checkReviewLimit(user.id)
+  if (!planLimit.allowed) {
+    const planName = planLimit.plan[0].toUpperCase() + planLimit.plan.slice(1)
+    return NextResponse.json(
+      {
+        error: `Monthly review limit reached (${planLimit.used}/${planLimit.limit} on the ${planName} plan)`,
+        upgradeUrl: '/billing',
+      },
+      { status: 403 }
+    )
+  }
+  await insertReservation(user.id, planLimit.windowStart, sessionId)
 
   const manuscriptId = (session.drafts as unknown as { manuscript_id: string } | null)?.manuscript_id
 

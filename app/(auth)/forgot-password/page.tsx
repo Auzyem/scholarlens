@@ -1,12 +1,16 @@
 'use client'
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Logo } from '@/components/layout/Logo'
 
-export default function ForgotPasswordPage() {
+function ForgotPasswordForm() {
+  // /auth/callback sends us here with ?expired=1 when a recovery link fails to
+  // exchange — i.e. it has expired or was already used.
+  const expired = useSearchParams().get('expired') === '1'
   const [email, setEmail] = useState('')
   const [sent, setSent] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,6 +49,11 @@ export default function ForgotPasswordPage() {
           </div>
         ) : (
           <>
+            {expired && (
+              <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                That reset link has expired or was already used. Request a new one below.
+              </p>
+            )}
             <p className="mb-4 text-sm text-muted-foreground">
               Enter your email and we&apos;ll send you a link to set a new password. This also works
               if you originally signed up with Google and have never had a password.
@@ -64,5 +73,15 @@ export default function ForgotPasswordPage() {
         )}
       </Card>
     </div>
+  )
+}
+
+// useSearchParams opts the subtree into client-side rendering; without a
+// Suspense boundary the production build fails to prerender this route.
+export default function ForgotPasswordPage() {
+  return (
+    <Suspense fallback={null}>
+      <ForgotPasswordForm />
+    </Suspense>
   )
 }
