@@ -1,5 +1,6 @@
 import { anthropic, MODEL, MAX_TOKENS } from '../anthropic'
 import { extractJson } from '../json'
+import { textFromResponse } from '../response'
 import type { JournalMatchResult } from '@/lib/types'
 
 const SYSTEM_PROMPT = `You are an expert in academic publishing strategy with deep, current knowledge of journal scope, prestige, impact factors, acceptance culture, and decision timelines across disciplines.
@@ -65,7 +66,7 @@ export async function runJournalMatcher(
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = textFromResponse(response)
     return extractJson<JournalMatchResult>(text)
   }
   try {
