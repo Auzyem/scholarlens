@@ -1,5 +1,6 @@
 import { anthropic, MODEL, MAX_TOKENS } from '../anthropic'
 import { extractJson } from '../json'
+import { textFromResponse } from '../response'
 import type { ReportingGuideline } from '@/lib/reporting/guidelines'
 import type { ReportingCheckerResult } from '@/lib/types'
 
@@ -62,7 +63,7 @@ export async function runReportingChecker(
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: userPrompt }],
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = textFromResponse(response)
     return extractJson<ReportingCheckerResult>(text)
   }
   try {

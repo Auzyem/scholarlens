@@ -1,5 +1,6 @@
 import { anthropic, MODEL, MAX_TOKENS } from '../anthropic'
 import { extractJson } from '../json'
+import { textFromResponse } from '../response'
 import type { ProgressComparatorResult, Score, Annotation, ScoreDimension } from '@/lib/types'
 
 const SYSTEM = `You are a manuscript improvement analyst comparing two drafts of the same paper. You are given the per-dimension scores for the previous version (v1) and the current version (v2), plus the reviewer comments raised on v1. Assess honestly whether the revision actually improved the manuscript and whether the v1 comments were addressed.
@@ -73,7 +74,7 @@ export async function runProgressComparator(
       system: SYSTEM,
       messages: [{ role: 'user', content: userPrompt }],
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = textFromResponse(response)
     return extractJson<ProgressComparatorResult>(text)
   }
   try {

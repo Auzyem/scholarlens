@@ -1,5 +1,6 @@
 import { anthropic, MODEL, MAX_TOKENS } from '../anthropic'
 import { extractJson } from '../json'
+import { textFromResponse } from '../response'
 import type { DeepReviewerResult, ReviewerPersona } from '@/lib/types'
 
 const SYSTEM = (persona: ReviewerPersona, target: string) =>
@@ -27,7 +28,9 @@ Return ONLY valid JSON with this exact shape:
   "annotations": [
     { "section": string, "severity": "critical" | "major" | "minor", "comment": string, "suggestion": string }
   ]
-}`
+}
+
+Return at most 12 annotations, most important first. Prefer a few substantive comments over many trivial ones.`
 
 export async function runDeepReviewer(
   manuscriptText: string,
@@ -46,7 +49,7 @@ export async function runDeepReviewer(
         content: `Field: ${field}\nPersona: ${persona}\n\nManuscript:\n${manuscriptText.slice(0, 80000)}`,
       }],
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = textFromResponse(response)
     return extractJson<DeepReviewerResult>(text)
   }
   try {

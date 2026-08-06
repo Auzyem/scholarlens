@@ -1,5 +1,6 @@
 import { anthropic, MODEL } from '../anthropic'
 import { extractJson } from '../json'
+import { textFromResponse } from '../response'
 import type { DisciplineRouterResult } from '@/lib/types'
 
 const SYSTEM = `You are an expert academic librarian and meta-reviewer. Your only job is to analyse a manuscript and return a JSON object identifying its discipline, sub-field, document type, and the most appropriate reviewer persona to apply.
@@ -37,7 +38,7 @@ export async function runDisciplineRouter(
       system: SYSTEM,
       messages: [{ role: 'user', content: `Title: ${title}\n\nAbstract: ${abstract}` }],
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = textFromResponse(response)
     return extractJson<DisciplineRouterResult>(text)
   }
   try {

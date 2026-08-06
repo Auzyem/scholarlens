@@ -1,5 +1,6 @@
 import { anthropic, MODEL, MAX_TOKENS } from '../anthropic'
 import { extractJson } from '../json'
+import { textFromResponse } from '../response'
 import type { AdversarialReviewerResult, ReviewerPersona, Score } from '@/lib/types'
 
 // Pure helper: assemble a compact summary of the standard review's findings to
@@ -63,7 +64,7 @@ export async function runAdversarialReviewer(
         content: `Field: ${field}\nPersona: ${persona}\n\nStandard review findings to escalate:\n${priorReviewContext}\n\nManuscript:\n${manuscriptText.slice(0, 80000)}`,
       }],
     })
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = textFromResponse(response)
     return extractJson<AdversarialReviewerResult>(text)
   }
   try {
